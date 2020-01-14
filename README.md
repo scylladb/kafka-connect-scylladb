@@ -1,0 +1,78 @@
+ScyllaDB Sink Connector
+========================
+
+The ScyllaDB Sink Connector is a high-speed mechanism for reading records from Kafka and writing to ScyllaDB.
+
+Connector Installation
+-------------------------------
+
+Clone the connector from Github repository and refer this [link](QUICKSTART.md) for quickstart.
+
+##Prerequisites
+The following are required to run the ScyllaDB Sink Connector:
+* Kafka Broker: Confluent Platform 3.3.0 or above.
+* Connect: Confluent Platform 4.1.0 or above.
+* Java 1.8
+* ScyllaDB: cqlsh 5.0.1 | Cassandra 3.0.8 | CQL spec 3.3.1 | Native protocol v4
+
+
+Usage Notes
+-----------
+The ScyllaDB Sink Connector accepts two data formats from kafka. They are:
+* Avro Format 
+* JSON with Schema
+* JSON without Schema
+
+**Note:** In case of JSON without schema, the table should already be present in the keyspace.
+
+This connector uses the topic name to determine the name of the table to write to. You can change this dynamically by using a
+transform like [Regex Router](<https://kafka.apache.org/documentation/#connect_transforms>) to change the topic name.
+
+To run this connector you can you a dockerised ScyllaDB instance. Follow this [link](https://hub.docker.com/r/scylladb/scylla/) for use.
+
+
+-----------------
+Schema Management
+-----------------
+
+You can configure this connector to manage the schema on the ScyllaDB cluster. When altering an existing table the key
+is ignored. This is to avoid the potential issues around changing a primary key on an existing table. The key schema is used to
+generate a primary key for the table when it is created. These fields must also be in the value schema. Data
+written to the table is always read from the value from Apache Kafka. This connector uses the topic to determine the name of
+the table to write to. This can be changed on the fly by using a transform to change the topic name.
+
+--------------------------
+Time To Live (TTL) Support
+--------------------------
+This connector provides support for TTL by which data can be automatically expired after a specific period.
+``TTL`` value is the time to live value for the data. After that particular amount of time, data will be automatically deleted. For example, if the TTL value is set to 100 seconds then data would be automatically deleted after 100 seconds.
+To use this feature you have to set ``scylladb.ttl`` config with time(in seconds) for which you want to retain the data. If you don't specify this property then the record will be inserted with default TTL value null, meaning that written data will not expire.
+
+--------------------------------
+Offset tracking Support in Kafka
+--------------------------------
+This connector support two types of offset tracking support.
+
+**Offset stored in ScyllaDB Table**
+
+This is the default behaviour of the connector. Here, the offset is stored in the ScyllaDB table.
+
+**Offset stored in Kafka**
+
+If you want that offset should be managed in kafka then you must specify ``scylladb.offset.storage.table.enable=false``. By default, this property is true (in this case offset will be stored in the ScyllaDB table).
+
+---------------
+Troubleshooting
+---------------
+
+If you encounter error messages like this:
+
+
+    Batch for [test.twitter] is of size 127.661KiB, exceeding specified threshold of 50.000KiB by 77.661KiB
+
+Or warning messages like this:
+
+    Batch for [test.twitter] is of size 25.885KiB, exceeding specified threshold of 5.000KiB by 20.885KiB
+
+Try adjusting the ``consumer.max.poll.records`` setting in the worker.properties for |kconnect-long|.
+

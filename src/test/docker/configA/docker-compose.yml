@@ -1,0 +1,7 @@
+
+my:
+  image: replace-with-image-name
+  ports:
+    - 1234
+  volumes:
+    - ./external.conf:/some/config/external.conf
