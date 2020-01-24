@@ -76,3 +76,9 @@ Or warning messages like this:
 
 Try adjusting the ``consumer.max.poll.records`` setting in the worker.properties for |kconnect-long|.
 
+-----------------------
+Reporting Kafka Metrics
+-----------------------
+
+Refer the following [confluent documentation](https://docs.confluent.io/current/kafka/metrics-reporter.html)
+to access kafka related metrics.
