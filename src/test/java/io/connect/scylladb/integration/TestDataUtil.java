@@ -6,8 +6,8 @@ import org.apache.kafka.connect.data.*;
 
 import java.util.*;
 
-public class StructUtil {
-    private StructUtil() {
+public class TestDataUtil {
+    private TestDataUtil() {
 
     }
 

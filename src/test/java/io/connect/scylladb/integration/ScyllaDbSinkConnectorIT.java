@@ -30,8 +30,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static io.connect.scylladb.integration.SinkRecordUtil.write;
-import static io.connect.scylladb.integration.StructUtil.asMap;
-import static io.connect.scylladb.integration.StructUtil.struct;
+import static io.connect.scylladb.integration.TestDataUtil.asMap;
+import static io.connect.scylladb.integration.TestDataUtil.struct;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -750,7 +750,7 @@ public class ScyllaDbSinkConnectorIT {
     final TopicPartition topicPartition = new TopicPartition(topic, 1);
     when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
     ScyllaDbSinkConnectorConfig config = new ScyllaDbSinkConnectorConfig(settings);
-    try (ScyllaDbSession session = new ScyllaDbSessionFactoryImpl().newSession(config)) {
+    try (ScyllaDbSession session = new ScyllaDbSessionFactory().newSession(config)) {
       Map<TopicPartition, OffsetAndMetadata> offsets = ImmutableMap.of(
               topicPartition, new OffsetAndMetadata(123451234L)
       );

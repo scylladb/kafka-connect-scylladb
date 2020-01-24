@@ -23,7 +23,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   private final ScyllaDbSinkConnectorConfig config;
   private final Cluster cluster;
   private final Session session;
-  private final ConnectSchemaBuilder schemaBuilder;
+  private final ScyllaDbSchemaBuilder schemaBuilder;
   private boolean sessionValid = true;
   private final Map<String, TableMetadata.Table> tableMetadataCache;
   private final Map<String, RecordToBoundStatementConverter> deleteStatementCache;
@@ -33,7 +33,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     this.cluster = cluster;
     this.session = session;
     this.config = config;
-    this.schemaBuilder = new ConnectSchemaBuilder(this, config);
+    this.schemaBuilder = new ScyllaDbSchemaBuilder(this, config);
     this.tableMetadataCache = new HashMap<>();
     this.deleteStatementCache = new HashMap<>();
     this.insertStatementCache = new HashMap<>();

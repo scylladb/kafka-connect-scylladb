@@ -63,7 +63,7 @@ public class ScyllaDbSinkTask extends SinkTask {
    */
   private ScyllaDbSession getValidSession() {
     
-    ScyllaDbSessionFactory sessionFactory = new ScyllaDbSessionFactoryImpl();
+    ScyllaDbSessionFactory sessionFactory = new ScyllaDbSessionFactory();
 
     if (session == null) {
       log.info("Creating ScyllaDb Session.");
@@ -161,6 +161,7 @@ public class ScyllaDbSinkTask extends SinkTask {
                   future.getUninterruptibly(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
         }
         context.requestCommit();
+        // TODO : Log the records that fail in Queue/Kafka Topic.
       } catch (TransportException ex) {
         log.debug("put() - Setting clusterValid = false", ex);
         getValidSession().setInvalid();

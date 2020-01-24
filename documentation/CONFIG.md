@@ -40,7 +40,7 @@ Connector-specific configuration properties are described below.
   
 ``scylladb.username``
   
-  The username to connect to ScyllaDB with. Set scylladb.security.enable = true to use this config.
+  The username to connect to ScyllaDB with. Set ``scylladb.security.enable = true`` to use this config.
   
   * Type: String
   * Importance: High
@@ -48,7 +48,7 @@ Connector-specific configuration properties are described below.
   
 ``scylladb.password``
   
-  The password to connect to ScyllaDB with. Set scylladb.security.enable = true to use this config.
+  The password to connect to ScyllaDB with. Set ``scylladb.security.enable = true`` to use this config.
   
   * Type: Password
   * Importance: High
@@ -56,7 +56,7 @@ Connector-specific configuration properties are described below.
   
 ``scylladb.compression``
   
-  Compression algorithm to use when connecting to Scylladb.
+  Compression algorithm to use when connecting to ScyllaDB.
   
   * Type: string
   * Default: NONE
@@ -65,7 +65,7 @@ Connector-specific configuration properties are described below.
   
 ``scylladb.ssl.enabled``
   
-  Flag to determine if SSL is enabled when connecting to Scylladb.
+  Flag to determine if SSL is enabled when connecting to ScyllaDB.
   
   * Type: boolean
   * Default: false
@@ -88,7 +88,7 @@ Connector-specific configuration properties are described below.
   * Importance: medium
 
 ``scylladb.ssl.provider``
-  The SSL Provider to use when connecting to Scylladb.
+  The SSL Provider to use when connecting to ScyllaDB.
 
   * Type: string
   * Default: JDK
@@ -114,7 +114,9 @@ Connector-specific configuration properties are described below.
 
 ``scylladb.keyspace.replication.factor``
     
-  The replication factor to use if a keyspace is created by the connector. The Replication Factor (RF) is equivalent to the number of nodes where data (rows and partitions) are replicated. Data is replicated to multiple (RF=N) nodes
+  The replication factor to use if a keyspace is created by the connector. 
+  The Replication Factor (RF) is equivalent to the number of nodes where data (rows and partitions) 
+  are replicated. Data is replicated to multiple (RF=N) nodes
   
   * Type: int
   * Default: 3
@@ -161,7 +163,9 @@ Connector-specific configuration properties are described below.
   * Valid Values: ``ANY``, ``ONE``, ``TWO``, ``THREE``, ``QUORUM``, ``ALL``, ``LOCAL_QUORUM``, ``EACH_QUORUM``, ``SERIAL``, ``LOCAL_SERIAL``, ``LOCAL_ONE``
 
 ``scylladb.deletes.enabled``
-  Flag to determine if the connector should process deletes.
+  Flag to determine if the connector should process deletes. 
+  The Kafka records with kafka record value as null will result in deletion of ScyllaDB record 
+  with the primary key present in Kafka record key.
 
   * Type: boolean
   * Default: true

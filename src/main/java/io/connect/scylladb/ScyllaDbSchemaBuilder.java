@@ -24,9 +24,9 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-class ConnectSchemaBuilder extends SchemaChangeListenerBase {
+class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
-  private static final Logger log = LoggerFactory.getLogger(ConnectSchemaBuilder.class);
+  private static final Logger log = LoggerFactory.getLogger(ScyllaDbSchemaBuilder.class);
 
   private static final Object DEFAULT = new Object();
 
@@ -35,7 +35,7 @@ class ConnectSchemaBuilder extends SchemaChangeListenerBase {
 
   final ScyllaDbSession session;
 
-  public ConnectSchemaBuilder(ScyllaDbSession session, ScyllaDbSinkConnectorConfig config) {
+  public ScyllaDbSchemaBuilder(ScyllaDbSession session, ScyllaDbSinkConnectorConfig config) {
     this.session = session;
     this.config = config;
     this.schemaLookup = CacheBuilder.newBuilder()
