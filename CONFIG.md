@@ -13,24 +13,24 @@ Connector-specific configuration properties are described below.
 
 ``scylladb.contact.points``
 
-  The ScyllaDB hosts to connect to.
-  Eg. When using the docker image , connect to the host it uses.
+  The ScyllaDB hosts to connect to. Scylla nodes use this list of hosts to find each other and learn the topology of the ring. You must change this if you are running multiple nodes.
+  Eg. When using the docker image, connect to the host it uses.
   
   * Type: List
   * Importance: High
   * Default Value: [localhost]
   
- ``scylladb.port``
+``scylladb.port``
  
   The port the ScyllaDB hosts are listening on.
-  Eg. When using a docker image, connect to the port it uses(use docker ps )
+  Eg. When using a docker image, connect to the port it uses(use docker ps)
    
   * Type: Int
   * Importance: Medium
   * Default Value: 9042
   * Valid Values: ValidPort{start=1, end=65535}
 
- ``scylladb.security.enabled``
+``scylladb.security.enabled``
  
   To enable security while loading the sink connector and connecting to ScyllaDB.
   
@@ -38,30 +38,70 @@ Connector-specific configuration properties are described below.
   * Importance: High
   * Default Value: False
   
-  ``scylladb.username``
+``scylladb.username``
   
   The username to connect to ScyllaDB with. Set scylladb.security.enable = true to use this config.
+  
   * Type: String
   * Importance: High
   * Default Value: cassandra
   
-  ``scylladb.password``
+``scylladb.password``
   
-  The password to connect to ScyllaDB with.
+  The password to connect to ScyllaDB with. Set scylladb.security.enable = true to use this config.
   
   * Type: Password
   * Importance: High
   * Default Value: cassandra
+  
+``scylladb.compression``
+  
+  Compression algorithm to use when connecting to Scylladb.
+  
+  * Type: string
+  * Default: NONE
+  * Valid Values: [NONE, SNAPPY, LZ4]
+  * Importance: low
+  
+``scylladb.ssl.enabled``
+  
+  Flag to determine if SSL is enabled when connecting to Scylladb.
+  
+  * Type: boolean
+  * Default: false
+  * Importance: high
+  
+###SSL
+
+``scylladb.ssl.truststore.path``
+  Path to the Java Truststore.
+
+  * Type: string
+  * Default: ""
+  * Importance: medium
+
+``scylladb.ssl.truststore.password``
+  Password to open the Java Truststore with.
+
+  * Type: password
+  * Default: [hidden]
+  * Importance: medium
+
+``scylladb.ssl.provider``
+  The SSL Provider to use when connecting to Scylladb.
+
+  * Type: string
+  * Default: JDK
+  * Valid Values: [JDK, OPENSSL, OPENSSL_REFCNT]
+  * Importance: low
 
 ### Keyspace
 
-
 ``scylladb.keyspace``
 
-  The keyspace to write to.This keyspace is like a database in the ScyllaDB cluster.
+  The keyspace to write to. This keyspace is like a database in the ScyllaDB cluster.
   * Type: String
   * Importance: High
-
 
 ``scylladb.keyspace.create.enabled``
 
@@ -72,6 +112,14 @@ Connector-specific configuration properties are described below.
   * Importance: High
   * Default Value: true
 
+``scylladb.keyspace.replication.factor``
+    
+  The replication factor to use if a keyspace is created by the connector. The Replication Factor (RF) is equivalent to the number of nodes where data (rows and partitions) are replicated. Data is replicated to multiple (RF=N) nodes
+  
+  * Type: int
+  * Default: 3
+  * Valid Values: [1,...]
+  * Importance: high
 
 ###Table
 
@@ -82,6 +130,15 @@ Connector-specific configuration properties are described below.
   * Type: Boolean
   * Importance: High
   * Default Value: true
+  
+``scylladb.table.create.compression.algorithm``
+  
+  Compression algorithm to use when the table is created.
+
+  * Type: string
+  * Default: NONE
+  * Valid Values: [NONE, SNAPPY, LZ4, DEFLATE]
+  * Importance: medium
 
 ``scylladb.offset.storage.table``
 
@@ -96,12 +153,19 @@ Connector-specific configuration properties are described below.
 
 ``scylladb.consistency.level``
 
-  The requested consistency level to use when writing to ScyllaDB.
+  The requested consistency level to use when writing to ScyllaDB. The Consistency Level (CL) determines how many replicas in a cluster that must acknowledge read or write operations before it is considered successful.
 
   * Type: String
   * Importance: High
   * Default Value: LOCAL_QUORUM
   * Valid Values: ``ANY``, ``ONE``, ``TWO``, ``THREE``, ``QUORUM``, ``ALL``, ``LOCAL_QUORUM``, ``EACH_QUORUM``, ``SERIAL``, ``LOCAL_SERIAL``, ``LOCAL_ONE``
+
+``scylladb.deletes.enabled``
+  Flag to determine if the connector should process deletes.
+
+  * Type: boolean
+  * Default: true
+  * Importance: high
 
 ``scylladb.execute.timeout.ms``
 
@@ -113,7 +177,7 @@ Connector-specific configuration properties are described below.
 
 ``scylladb.ttl``
 
-  The retention period for the data in ScyllaDB. After this interval elapses, ScyllaDB will remove these records.
+  The retention period for the data in ScyllaDB. After this interval elapses, ScyllaDB will remove these records. If this configuration is not provided, the Connector will perform insert operations in ScyllaDB  without ttl setting.
 
   * Type: Int
   * Importance: Medium

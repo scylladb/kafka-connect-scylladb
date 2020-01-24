@@ -42,7 +42,6 @@ public class ScyllaDbSinkConnector extends SinkConnector {
   public void start(Map<String, String> settings) {
     
     config = new ScyllaDbSinkConnectorConfig(settings);
-
     ScyllaDbSessionFactory sessionFactory = new ScyllaDbSessionFactoryImpl();
 
     try (ScyllaDbSession session = sessionFactory.newSession(config)) {

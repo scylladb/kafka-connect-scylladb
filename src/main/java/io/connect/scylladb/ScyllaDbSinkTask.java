@@ -112,18 +112,24 @@ public class ScyllaDbSinkTask extends SinkTask {
       final String tableName = record.topic();
       final BoundStatement boundStatement;
       if (null == record.value()) {
-        //TODO : Add support for delete
-        if (this.getValidSession().tableExists(tableName)) {
-          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.key());
-          Preconditions.checkState(
-                  state.parameters > 0,
-                  "key must contain the columns in the primary key."
-          );
-          boundStatement = state.statement;
+        if (config.deletesEnabled) {
+          if (this.getValidSession().tableExists(tableName)) {
+            final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
+            final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.key());
+            Preconditions.checkState(
+                    state.parameters > 0,
+                    "key must contain the columns in the primary key."
+            );
+            boundStatement = state.statement;
+          } else {
+            log.warn("put() - table '{}' does not exist. Skipping delete.", tableName);
+            continue;
+          }
         } else {
-          log.warn("put() - table '{}' does not exist. Skipping delete.", tableName);
-          continue;
+          throw new DataException(
+                  String.format("Record with null value found for the key '%s'. If you are trying to delete the record set " +
+                                  "scylladb.deletes.enabled = true in your connector configuration.",
+                          record.key()));
         }
       } else {
         this.getValidSession().createOrAlterTable(tableName, record.keySchema(), record.valueSchema());

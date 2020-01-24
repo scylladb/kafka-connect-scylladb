@@ -33,26 +33,26 @@ import static io.connect.scylladb.integration.SinkRecordUtil.write;
 import static io.connect.scylladb.integration.StructUtil.asMap;
 import static io.connect.scylladb.integration.StructUtil.struct;
 
-import static org.apache.kafka.test.TestUtils.waitForCondition;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.times;
 
 @Category(IntegrationTest.class)
-public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
+public class ScyllaDbSinkConnectorIT {
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorIT.class);
 
-  static final int SCYLLADB_PORT = 9042;
-  static final String SCYLLADB_KEYSPACE = "testing";
+  static final String SCYLLA_DB_CONTACT_POINT = "172.20.0.3";
+  static final int SCYLLA_DB_PORT = 9042;
+  static final String SCYLLADB_KEYSPACE = "testkeyspace";
   private static final String SCYLLADB_OFFSET_TABLE = "kafka_connect_offsets";
   private ScyllaDbSinkConnector connector;
 
   static Cluster.Builder clusterBuilder() {
     Cluster.Builder clusterBuilder = Cluster.builder()
-            .withPort(9042)
-            .addContactPoints("172.20.0.3")
+            .withPort(SCYLLA_DB_PORT)
+            .addContactPoints(SCYLLA_DB_CONTACT_POINT)
             .withProtocolVersion(ProtocolVersion.NEWEST_SUPPORTED);
     return clusterBuilder;
   }
@@ -61,8 +61,8 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     Map<String, String> result = new LinkedHashMap<>();
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, SCYLLADB_KEYSPACE);
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG, "true");
-    result.put(ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG, "172.20.0.3");
-    result.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, "9042");
+    result.put(ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG, SCYLLA_DB_CONTACT_POINT);
+    result.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, String.valueOf(SCYLLA_DB_PORT));
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_REPLICATION_FACTOR_CONFIG, "1");
     return result;
   }
@@ -121,7 +121,6 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
   @Test
   public void insert() {
     final Map<String, String> settings = settings();
-    settings.put(ScyllaDbSinkConnectorConfig.TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG, "DEFLATE");
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
     final String topic = "insertTesting";
@@ -181,7 +180,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     Set<TopicPartition> assignment = new HashSet<>();
 
     for (int i = 0; i < 10; i++) {
-      final String topic = String.format("decimalTesting%03d", i);
+      final String topic = String.format("decimalTesting", i);
       final BigDecimal decimalValue = BigDecimal.valueOf(123456789123L, i);
 
       Schema valueSchema = SchemaBuilder.struct()
@@ -216,7 +215,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     verify(this.sinkTaskContext, times(1)).assignment();
   }
 
-  @org.junit.jupiter.api.Test
+  @Test
   public void timestamp() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -324,7 +323,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     verify(this.sinkTaskContext, times(1)).assignment();
   }
 
-  @org.junit.jupiter.api.Test
+  @Test
   public void time() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -381,8 +380,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     verify(this.sinkTaskContext, times(1)).assignment();
   }
 
-  //TODO: failing need to check
-  //@Test
+  @Test
   public void uuidWithCreateTable() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -429,8 +427,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     verify(this.sinkTaskContext, times(1)).assignment();
   }
 
-  //TODO: failing need to check
-  //@Test
+  @Test
   public void uuidWithExistingTable() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -474,7 +471,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
             RowValidator.of(topic, key, value)
     );
 
-    execute("CREATE TABLE testing." + topic + "("
+    execute("CREATE TABLE testkeyspace." + topic + "("
             + "id bigint,"
             + "uuidStr varchar,"
             + "uuidValue uuid,"
@@ -513,11 +510,11 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
   }
 
   @Test
-  public void delete() {
+  public void deleteNullValueRow() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
-    final String topic = "deleteTesting";
+    final String topic = "deleteNullValueRowTesting";
     when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 1)));
     this.task.start(settings);
 
@@ -679,13 +676,12 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     });
     log.info("Exception", ex);
     assertTrue(
-            ex.getMessage().contains("CREATE TABLE testing.tableMissingManageTableDisabled"),
+            ex.getMessage().contains("CREATE TABLE testkeyspace.tableMissingManageTableDisabled"),
             "Exception message should contain create statement."
     );
   }
 
-  //TODO: failing need to check
-  //@Test
+  @Test
   public void tableExistsAlterManageTableDisabled() throws IOException {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -735,14 +731,14 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     });
     log.info("Exception", ex);
     assertTrue(
-            ex.getMessage().contains("Exception thrown while processing field 'city'"),
+            ex.getMessage().contains("ALTER TABLE testkeyspace.tableExistsAlterManageTableDisabled ADD city varchar;"),
             "Error message should contain alter statement for city"
     );
 
-    /*assertTrue(
-            ex.getMessage().contains("ALTER TABLE testing.tableExistsAlterManageTableDisabled ADD state varchar;"),
+    assertTrue(
+            ex.getMessage().contains("ALTER TABLE testkeyspace.tableExistsAlterManageTableDisabled ADD state varchar;"),
             "Error message should contain alter statement for state"
-    );*/
+    );
   }
 
   @Test
@@ -797,8 +793,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     verify(this.sinkTaskContext, times(1)).offset(ImmutableMap.of(topicPartition, 123451234L));
   }
 
-  //TODO: failing need to check
-  //@Test
+  @Test
   public void testRecordWithTtl() throws InterruptedException {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -843,7 +838,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     assertEquals(true, tableExists);
 
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    String query = "select * from testing.insertTestingttl";
+    String query = "select * from testkeyspace.insertTestingttl";
     List<Row> beforeTTL = executeSelect(query);
     assertEquals(2, beforeTTL.size());
     /**
@@ -899,7 +894,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
     assertEquals(true, tableExists);
 
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    String query = "SELECT TTL(firstName) from testing.insertTestingWithoutTtl";
+    String query = "SELECT TTL(firstName) from testkeyspace.insertTestingWithoutTtl";
     List<Row> getTTLRows = executeSelect(query);
     //TTL value is null i.e. ttl is not set.
     assertNull(getTTLRows.get(0).getObject(0));
@@ -972,7 +967,7 @@ public class ScyllaDbSinkConnectorIT extends BaseConnectorIT {
           // Convert both to a string ...
           expected = expected.toString();
           actual = actual.toString();
-          log.debug("Comparing string form of field {}. Query = '%s'", field, query);
+          log.debug("Comparing string form of field {}. Query = '{}'", field, query);
         }
         assertEquals(
                 expected,

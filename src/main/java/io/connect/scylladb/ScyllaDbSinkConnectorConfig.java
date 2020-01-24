@@ -41,7 +41,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final boolean offsetEnabledInScyllaDB;
   public final boolean tableManageEnabled;
   public final TableOptions.CompressionOptions tableCompressionAlgorithm;
-  public final SchemaBuilder.Caching tableCaching;
   public final char[] trustStorePassword;
   public final File trustStorePath;
   public final String offsetStorageTable;
@@ -62,7 +61,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           "DEFLATE", TableOptions.CompressionOptions.Algorithm.DEFLATE
       );
 
-
   public ScyllaDbSinkConnectorConfig(Map<?, ?> originals) {
     super(config(), originals);
     this.port = getInt(PORT_CONFIG);
@@ -77,12 +75,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.deletesEnabled = getBoolean(DELETES_ENABLE_CONFIG);
 
     final String keyspace = getString(KEYSPACE_CONFIG);
-
-    if (Strings.isNullOrEmpty(keyspace)) {
-      this.keyspace = null;
-    } else {
-      this.keyspace = keyspace;
-    }
+    this.keyspace = Strings.isNullOrEmpty(keyspace) ? null : keyspace;
 
     final String trustStorePath = this.getString(SSL_TRUSTSTORE_PATH_CONFIG);
     this.trustStorePath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(trustStorePath);
@@ -115,23 +108,20 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       default :
         tableCompressionAlgorithm = SchemaBuilder.noCompression();
     }
-    this.tableCaching = ConfigUtils.getEnum(
-            SchemaBuilder.Caching.class,
-            this,
-            TABLE_CREATE_CACHING_CONFIG
-    );
+
     this.offsetStorageTable = getString(OFFSET_STORAGE_TABLE_CONF);
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
-  private static final String PORT_DOC = "The port the Scylladb hosts are listening on.";
+  private static final String PORT_DOC = "The port the Scylladb hosts are listening on. "
+          + "Eg. When using a docker image, connect to the port it uses(use docker ps)";
 
   public static final String CONTACT_POINTS_CONFIG = "scylladb.contact.points";
   static final String CONTACT_POINTS_DOC = "The Scylladb hosts to connect to. " +
           "Scylla nodes use this list of hosts to find each other and learn " +
           "the topology of the ring. You must change this if you are running " +
-          " multiple nodes.";
+          " multiple nodes. Eg. When using the docker image, connect to the host it uses.";
 
   public static final String CONSISTENCY_LEVEL_CONFIG = "scylladb.consistency.level";
   private static final String CONSISTENCY_LEVEL_DOC =
@@ -145,28 +135,32 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String SSL_PROVIDER_CONFIG = "scylladb.ssl.provider";
   private static final String SSL_PROVIDER_DOC =
-          "The SSL Provider to use when connecting to Scylladb";
+          "The SSL Provider to use when connecting to Scylladb.";
 
   public static final String SECURITY_ENABLE_CONFIG = "scylladb.security.enabled";
-  static final String SECURITY_ENABLE_DOC = "Flag to determine if security is enabled.";
+  static final String SECURITY_ENABLE_DOC = "To enable security while loading "
+          + "the sink connector and connecting to ScyllaDB.";
 
-  //TODO : If feasible, add support for DELETE operations.
   public static final String DELETES_ENABLE_CONFIG = "scylladb.deletes.enabled";
   private static final String DELETES_ENABLE_DOC =
           "Flag to determine if the connector should process deletes.";
 
   public static final String USERNAME_CONFIG = "scylladb.username";
-  private static final String USERNAME_DOC = "The username to connect to Scylladb with.";
+  private static final String USERNAME_DOC = "The username to connect to ScyllaDB with. "
+          + "Set scylladb.security.enable = true to use this config.";
 
   public static final String PASSWORD_CONFIG = "scylladb.password";
-  private static final String PASSWORD_DOC = "The password to connect to Scylladb with.";
+  private static final String PASSWORD_DOC = "The password to connect to Scylladb with. "
+          + "Set scylladb.security.enable = true to use this config.";
 
   public static final String KEYSPACE_CONFIG = "scylladb.keyspace";
-  private static final String KEYSPACE_DOC = "The keyspace to write to.";
+  private static final String KEYSPACE_DOC = "The keyspace to write to. "
+          + "This keyspace is like a database in the ScyllaDB cluster.";
 
   public static final String KEYSPACE_CREATE_ENABLED_CONFIG = "scylladb.keyspace.create.enabled";
   private static final String KEYSPACE_CREATE_ENABLED_DOC =
-          "Flag to determine if the keyspace should be created if it does not exist.";
+          "Flag to determine if the keyspace should be created if it does not exist. "
+          + "**Note**: Error if a new keyspace has to be created and the config is false.";
 
   public static final String KEYSPACE_REPLICATION_FACTOR_CONFIG =
           "scylladb.keyspace.replication.factor";
@@ -188,10 +182,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   private static final String TABLE_CREATE_COMPRESSION_ALGORITHM_DOC =
           "Compression algorithm to use when the table is created.";
 
-  //TODO:remove this unused config
-  public static final String TABLE_CREATE_CACHING_CONFIG = "scylladb.table.create.caching";
-  private static final String TABLE_CREATE_CACHING_DOC = "Caching setting to use.";
-
   public static final String OFFSET_STORAGE_TABLE_CONF = "scylladb.offset.storage.table";
   private static final String OFFSET_STORAGE_TABLE_DOC = "The table within the Scylladb keyspace "
           + "to store the offsets that have been read from Kafka. This is used to enable exactly once "
@@ -205,7 +195,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                   + "into Scylladb when a task restarts).";
 
   public static final String EXECUTE_STATEMENT_TIMEOUT_MS_CONF = "scylladb.execute.timeout.ms";
-  private static final String EXECUTE_STATEMENT_TIMEOUT_MS_DOC = "scylladb.execute.timeout.ms";
+  private static final String EXECUTE_STATEMENT_TIMEOUT_MS_DOC = "The timeout for executing a ScyllaDB statement.";
 
   public static final String SSL_TRUSTSTORE_PATH_CONFIG = "scylladb.ssl.truststore.path";
   private static final String SSL_TRUSTSTORE_PATH_DOC = "Path to the Java Truststore.";
@@ -352,7 +342,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Type.BOOLEAN,
                     true,
                     ConfigDef.Importance.HIGH,
-                    DELETES_ENABLE_DOC, WRITE_GROUP,
+                    DELETES_ENABLE_DOC,
+                    WRITE_GROUP,
                     1,
                     ConfigDef.Width.SHORT,
                     "Perform Deletes")
@@ -410,24 +401,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     "Table Compression")
             //TODO .recommender(Recommenders.visibleIf(TABLE_MANAGE_ENABLED_CONFIG, true))
             .define(
-                    TABLE_CREATE_CACHING_CONFIG,
-                    ConfigDef.Type.STRING,
-                    SchemaBuilder.Caching.NONE.toString(),
-                    ValidEnum.of(SchemaBuilder.Caching.class),
-                    ConfigDef.Importance.MEDIUM,
-                    TABLE_CREATE_CACHING_DOC,
-                    TABLE_GROUP,
-                    2,
-                    ConfigDef.Width.SHORT,
-                    "Table Caching")
-            //TODO .recommender(Recommenders.visibleIf(TABLE_MANAGE_ENABLED_CONFIG, true))
-            .define(
                     OFFSET_STORAGE_TABLE_CONF,
                     ConfigDef.Type.STRING,
                     "kafka_connect_offsets",
-                    ConfigDef.Importance.LOW, OFFSET_STORAGE_TABLE_DOC,
+                    ConfigDef.Importance.LOW,
+                    OFFSET_STORAGE_TABLE_DOC,
                     TABLE_GROUP,
-                    3,
+                    2,
                     ConfigDef.Width.SHORT,
                     "Offset storage table.")
             .define(
