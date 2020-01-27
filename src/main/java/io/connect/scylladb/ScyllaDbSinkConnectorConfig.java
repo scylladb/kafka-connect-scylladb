@@ -212,7 +212,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   private static final String TTL_DOC = "The retention period for the data in ScyllaDB. "
           + "After this interval elapses, Scylladb will remove these records. "
           + "If this configuration is not provided, the Sink Connector will perform "
-          + "insert operations in ScyllaDB  without ttl setting.";
+          + "insert operations in ScyllaDB  without TTL setting.";
 
   public static final String CONNECTION_GROUP = "Connection";
   public static final String SSL_GROUP = "SSL";

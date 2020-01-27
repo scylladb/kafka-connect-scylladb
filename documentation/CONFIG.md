@@ -182,7 +182,7 @@ Connector-specific configuration properties are described below.
 
 ``scylladb.ttl``
 
-  The retention period for the data in ScyllaDB. After this interval elapses, ScyllaDB will remove these records. If this configuration is not provided, the Sink Connector will perform insert operations in ScyllaDB  without ttl setting.
+  The retention period for the data in ScyllaDB. After this interval elapses, ScyllaDB will remove these records. If this configuration is not provided, the Sink Connector will perform insert operations in ScyllaDB  without TTL setting.
 
   * Type: Int
   * Importance: Medium
