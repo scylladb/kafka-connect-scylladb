@@ -14,6 +14,7 @@ Connector-specific configuration properties are described below.
 ``scylladb.contact.points``
 
   The ScyllaDB hosts to connect to. Scylla nodes use this list of hosts to find each other and learn the topology of the ring. You must change this if you are running multiple nodes.
+  It's essential to put at least 2 hosts in case of bigger cluster, since if first host is down, it will contact second one and get the state of the cluster from it.
   Eg. When using the docker image, connect to the host it uses.
   
   * Type: List
@@ -181,7 +182,7 @@ Connector-specific configuration properties are described below.
 
 ``scylladb.ttl``
 
-  The retention period for the data in ScyllaDB. After this interval elapses, ScyllaDB will remove these records. If this configuration is not provided, the Connector will perform insert operations in ScyllaDB  without ttl setting.
+  The retention period for the data in ScyllaDB. After this interval elapses, ScyllaDB will remove these records. If this configuration is not provided, the Sink Connector will perform insert operations in ScyllaDB  without ttl setting.
 
   * Type: Int
   * Importance: Medium

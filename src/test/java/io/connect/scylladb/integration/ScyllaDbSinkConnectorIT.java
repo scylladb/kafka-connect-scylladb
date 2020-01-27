@@ -471,7 +471,7 @@ public class ScyllaDbSinkConnectorIT {
             RowValidator.of(topic, key, value)
     );
 
-    execute("CREATE TABLE testkeyspace." + topic + "("
+    execute("CREATE TABLE " + SCYLLADB_KEYSPACE + "." + topic + "("
             + "id bigint,"
             + "uuidStr varchar,"
             + "uuidValue uuid,"
@@ -676,7 +676,7 @@ public class ScyllaDbSinkConnectorIT {
     });
     log.info("Exception", ex);
     assertTrue(
-            ex.getMessage().contains("CREATE TABLE testkeyspace.tableMissingManageTableDisabled"),
+            ex.getMessage().contains("CREATE TABLE " + SCYLLADB_KEYSPACE + ".tableMissingManageTableDisabled"),
             "Exception message should contain create statement."
     );
   }
@@ -731,12 +731,12 @@ public class ScyllaDbSinkConnectorIT {
     });
     log.info("Exception", ex);
     assertTrue(
-            ex.getMessage().contains("ALTER TABLE testkeyspace.tableExistsAlterManageTableDisabled ADD city varchar;"),
+            ex.getMessage().contains("ALTER TABLE " + SCYLLADB_KEYSPACE + ".tableExistsAlterManageTableDisabled ADD city varchar;"),
             "Error message should contain alter statement for city"
     );
 
     assertTrue(
-            ex.getMessage().contains("ALTER TABLE testkeyspace.tableExistsAlterManageTableDisabled ADD state varchar;"),
+            ex.getMessage().contains("ALTER TABLE " + SCYLLADB_KEYSPACE + ".tableExistsAlterManageTableDisabled ADD state varchar;"),
             "Error message should contain alter statement for state"
     );
   }
@@ -838,7 +838,7 @@ public class ScyllaDbSinkConnectorIT {
     assertEquals(true, tableExists);
 
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    String query = "select * from testkeyspace.insertTestingttl";
+    String query = "select * from " + SCYLLADB_KEYSPACE + ".insertTestingttl";
     List<Row> beforeTTL = executeSelect(query);
     assertEquals(2, beforeTTL.size());
     /**
@@ -894,7 +894,7 @@ public class ScyllaDbSinkConnectorIT {
     assertEquals(true, tableExists);
 
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    String query = "SELECT TTL(firstName) from testkeyspace.insertTestingWithoutTtl";
+    String query = "SELECT TTL(firstName) from " + SCYLLADB_KEYSPACE + ".insertTestingWithoutTtl";
     List<Row> getTTLRows = executeSelect(query);
     //TTL value is null i.e. ttl is not set.
     assertNull(getTTLRows.get(0).getObject(0));
