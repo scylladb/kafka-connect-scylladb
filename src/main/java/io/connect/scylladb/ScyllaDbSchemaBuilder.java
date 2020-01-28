@@ -24,9 +24,9 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-class ConnectSchemaBuilder extends SchemaChangeListenerBase {
+class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
-  private static final Logger log = LoggerFactory.getLogger(ConnectSchemaBuilder.class);
+  private static final Logger log = LoggerFactory.getLogger(ScyllaDbSchemaBuilder.class);
 
   private static final Object DEFAULT = new Object();
 
@@ -35,7 +35,7 @@ class ConnectSchemaBuilder extends SchemaChangeListenerBase {
 
   final ScyllaDbSession session;
 
-  public ConnectSchemaBuilder(ScyllaDbSession session, ScyllaDbSinkConnectorConfig config) {
+  public ScyllaDbSchemaBuilder(ScyllaDbSession session, ScyllaDbSinkConnectorConfig config) {
     this.session = session;
     this.config = config;
     this.schemaLookup = CacheBuilder.newBuilder()
@@ -172,7 +172,8 @@ class ConnectSchemaBuilder extends SchemaChangeListenerBase {
             )
         );
       } else {
-        String query = alterTable.withOptions().compressionOptions(config.tableCompressionAlgorithm).buildInternal();
+        String query = alterTable.withOptions()
+                .compressionOptions(config.tableCompressionAlgorithm).buildInternal();
         this.session.executeQuery(query);
         for (Map.Entry<String, DataType> e : addedColumns.entrySet()) {
           final String columnName = e.getKey();
@@ -260,7 +261,6 @@ class ConnectSchemaBuilder extends SchemaChangeListenerBase {
       tableOptions.comment(valueSchema.doc());
     }
 
-
     Set<String> fields = new HashSet<>();
     for (final Field keyField : keySchema.fields()) {
       final DataType dataType = dataType(keyField.schema());
@@ -279,9 +279,9 @@ class ConnectSchemaBuilder extends SchemaChangeListenerBase {
     }
 
     if (this.config.tableManageEnabled) {
-      String query = create.withOptions().compressionOptions(config.tableCompressionAlgorithm).buildInternal();
-      log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, query);
-      this.session.executeQuery(query);
+      tableOptions.compressionOptions(config.tableCompressionAlgorithm).buildInternal();
+      log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, tableOptions);
+      session.executeStatement(tableOptions);
     } else {
       throw new DataException(
           String.format("Create statement needed:\n%s", create)

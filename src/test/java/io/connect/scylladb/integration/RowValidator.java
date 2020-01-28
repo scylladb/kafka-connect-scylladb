@@ -8,7 +8,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.util.Map;
 
-import static io.connect.scylladb.integration.StructUtil.asMap;
+import static io.connect.scylladb.integration.TestDataUtil.asMap;
 
 class RowValidator {
   final String table;

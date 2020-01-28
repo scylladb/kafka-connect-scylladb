@@ -6,7 +6,7 @@ The ScyllaDB Sink Connector is a high-speed mechanism for reading records from K
 Connector Installation
 -------------------------------
 
-Clone the connector from Github repository and refer this [link](QUICKSTART.md) for quickstart.
+Clone the connector from Github repository and refer this [link](./documentation/QUICKSTART.md) for quickstart.
 
 ##Prerequisites
 The following are required to run the ScyllaDB Sink Connector:
@@ -76,3 +76,9 @@ Or warning messages like this:
 
 Try adjusting the ``consumer.max.poll.records`` setting in the worker.properties for |kconnect-long|.
 
+-----------------------
+Reporting Kafka Metrics
+-----------------------
+
+Refer the following [confluent documentation](https://docs.confluent.io/current/kafka/metrics-reporter.html)
+to access kafka related metrics.
