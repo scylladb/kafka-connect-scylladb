@@ -74,8 +74,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.sslEnabled = getBoolean(SSL_ENABLED_CONFIG);
     this.deletesEnabled = getBoolean(DELETES_ENABLE_CONFIG);
 
-    final String keyspace = getString(KEYSPACE_CONFIG);
-    this.keyspace = Strings.isNullOrEmpty(keyspace) ? null : keyspace;
+    this.keyspace = getString(KEYSPACE_CONFIG);
 
     final String trustStorePath = this.getString(SSL_TRUSTSTORE_PATH_CONFIG);
     this.trustStorePath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(trustStorePath);
