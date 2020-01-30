@@ -1,18 +1,13 @@
 package io.connect.scylladb;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.datastax.driver.core.BoundStatement;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
@@ -20,11 +15,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.exceptions.TransportException;
-import com.google.common.base.Preconditions;
 
 /**
  * Task class for ScyllaDB Sink Connector.
@@ -90,67 +83,56 @@ public class ScyllaDbSinkTask extends SinkTask {
     int count = 0;
     final List<ResultSetFuture> futures = new ArrayList<>(records.size());
 
+    //create a map containing topic, map of partition number and list of records
+    Map<TopicPartition, List<BatchStatement>> topicBatchingMap = new HashMap<>();
+    Map<TopicPartition, Integer> topicRecordSizeMap = new HashMap<>();
+
     for (SinkRecord record : records) {
-      if (null == record.key()) {
-        throw new DataException(
-                "Record with a null key was encountered. This connector requires that records "
-                + "from Kafka contain the keys for the ScyllaDb table. Please use a "
-                + "transformation like org.apache.kafka.connect.transforms.ValueToKey "
-                + "to create a key with the proper fields."
-        );
-      }
+      TopicPartitionerHelper topicPartitionerHandler = new TopicPartitionerHelper(config, getValidSession());
+      topicPartitionerHandler.validateRecord(record);
 
-      if (!(record.key() instanceof Struct) && !(record.key() instanceof Map)) {
-        throw new DataException(
-                "Key must be a struct or map. This connector requires that records from Kafka "
-                + "contain the keys for the ScyllaDb table. Please use a transformation like "
-                + "org.apache.kafka.connect.transforms.ValueToKey to create a key with the "
-                + "proper fields."
-        );
-      }
+      final String topicName = record.topic();
+      final int partition = record.kafkaPartition();
+      int recordSize = topicRecordSizeMap.getOrDefault(new TopicPartition(topicName, partition), 0);
+      topicRecordSizeMap.put(new TopicPartition(topicName, partition),
+              recordSize + (byte) (record.toString().length()));
 
-      final String tableName = record.topic();
-      final BoundStatement boundStatement;
-      if (null == record.value()) {
-        if (config.deletesEnabled) {
-          if (this.getValidSession().tableExists(tableName)) {
-            final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-            final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.key());
-            Preconditions.checkState(
-                    state.parameters > 0,
-                    "key must contain the columns in the primary key."
-            );
-            boundStatement = state.statement;
-          } else {
-            log.warn("put() - table '{}' does not exist. Skipping delete.", tableName);
-            continue;
-          }
-        } else {
-          throw new DataException(
-                  String.format("Record with null value found for the key '%s'. If you are trying to delete the record set " +
-                                  "scylladb.deletes.enabled = true in your connector configuration.",
-                          record.key()));
-        }
+      BoundStatement boundStatement = topicPartitionerHandler.getBoundStatementForRecord(record);
+
+      List<BatchStatement> batchStatementList = topicBatchingMap.containsKey(new TopicPartition(topicName, partition)) ?
+              topicBatchingMap.get(new TopicPartition(topicName, partition)) : new ArrayList<>();
+
+      BatchStatement batchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
+      int totalBatchSize = topicRecordSizeMap.get(new TopicPartition(topicName, partition));
+      if (totalBatchSize <= config.maxBatchSize) {
+        batchStatement = batchStatementList.size() > 0 ?
+                batchStatementList.get(batchStatementList.size() - 1) : batchStatement;
       } else {
-        this.getValidSession().createOrAlterTable(tableName, record.keySchema(), record.valueSchema());
-        final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName);
-        final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.value());
-        boundStatement = state.statement;
+        topicRecordSizeMap.put(new TopicPartition(topicName, partition), 0);
       }
 
-      boundStatement.setConsistencyLevel(this.config.consistencyLevel);
-      if (null != record.timestamp()) {
-        boundStatement.setDefaultTimestamp(record.timestamp());
-      }
-      log.trace("put() - Executing Bound Statement for {}:{}:{}",
+      log.trace("put() - Adding Bound Statement for {}:{}:{}",
               record.topic(),
               record.kafkaPartition(),
               record.kafkaOffset()
       );
-      ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(boundStatement);
-      futures.add(resultSetFuture);
 
-      count++;
+      batchStatement.add(boundStatement);
+      if (batchStatement.size() == 1) {
+        batchStatementList.add(batchStatement);
+      }
+      topicBatchingMap.put(new TopicPartition(topicName, partition), batchStatementList);
+
+    }
+    
+    for (List<BatchStatement> batchStatementList : topicBatchingMap.values()) {
+      for (BatchStatement batchStatement : batchStatementList) {
+        log.trace("put() - Executing Batch Statement {} of size {}",
+                batchStatement, batchStatement.size());
+        ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(batchStatement);
+        futures.add(resultSetFuture);
+        count++;
+      }
     }
 
     if (count > 0) {

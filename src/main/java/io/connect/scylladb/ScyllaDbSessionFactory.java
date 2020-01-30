@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import com.datastax.driver.core.*;
+import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
 import io.connect.scylladb.codec.StringTimeUuidCodec;
 import io.connect.scylladb.codec.StringUuidCodec;
 import io.netty.handler.ssl.SslContext;
@@ -36,6 +37,11 @@ public class ScyllaDbSessionFactory {
         .addContactPoints(config.contactPoints)
         .withProtocolVersion(ProtocolVersion.NEWEST_SUPPORTED)
         .withCodecRegistry(CODEC_REGISTRY);
+    if (!config.loadBalancingLocalDc.isEmpty()) {
+      clusterBuilder.withLoadBalancingPolicy(
+              DCAwareRoundRobinPolicy.builder()
+                  .withLocalDc(config.loadBalancingLocalDc).build());
+    }
     if (config.securityEnabled) {
       clusterBuilder.withCredentials(config.username, config.password);
     }

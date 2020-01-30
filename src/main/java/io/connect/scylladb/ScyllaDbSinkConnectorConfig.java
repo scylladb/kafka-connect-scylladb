@@ -45,6 +45,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final File trustStorePath;
   public final String offsetStorageTable;
   public final long statementTimeoutMs;
+  public final int maxBatchSize;
+  public final String loadBalancingLocalDc;
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
       ImmutableMap.of(
@@ -110,6 +112,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
     this.offsetStorageTable = getString(OFFSET_STORAGE_TABLE_CONF);
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
+    this.maxBatchSize = getInt(MAX_BATCH_SIZE_CONFIG);
+    this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
@@ -213,6 +217,14 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
 
+  public static final String MAX_BATCH_SIZE_CONFIG = "scylladb.max.batch.size";
+  public static final int MAX_BATCH_SIZE_DEFAULT = 50 * 1024;
+  private static final String MAX_BATCH_SIZE_DOC = "Maximum records size that could be send in one batch request to ScyllaDB";
+
+  private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
+  private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
+  private static final String LOAD_BALANCING_LOCAL_DC_DOC = "The case-sensitive datacenter name (commonly dc1, dc2, etc.) local to the machine on which the connector is running.";
+
   public static final String CONNECTION_GROUP = "Connection";
   public static final String SSL_GROUP = "SSL";
   public static final String KEYSPACE_GROUP = "Keyspace";
@@ -242,6 +254,16 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     1,
                     ConfigDef.Width.SHORT,
                     "Port")
+            .define(
+                    LOAD_BALANCING_LOCAL_DC_CONFIG,
+                    ConfigDef.Type.STRING,
+                    LOAD_BALANCING_LOCAL_DC_DEFAULT,
+                    ConfigDef.Importance.HIGH,
+                    LOAD_BALANCING_LOCAL_DC_DOC,
+                    CONNECTION_GROUP,
+                    2,
+                    ConfigDef.Width.LONG,
+                    "Load Balancing Local DC")
             .define(
                     SECURITY_ENABLE_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -442,7 +464,18 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     4,
                     ConfigDef.Width.SHORT,
-                    "Enable offset stored in cassandra");
+                    "Enable offset stored in cassandra")
+            .define(
+                    MAX_BATCH_SIZE_CONFIG,
+                    ConfigDef.Type.INT,
+                    MAX_BATCH_SIZE_DEFAULT,
+                    ConfigDef.Range.atLeast(0),
+                    ConfigDef.Importance.HIGH,
+                    MAX_BATCH_SIZE_DOC,
+                    WRITE_GROUP,
+                    4,
+                    ConfigDef.Width.LONG,
+                    "Max Batch Size");
   }
 
   public String ttl() {
