@@ -1,6 +1,11 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.*;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.CodecRegistry;
+import com.datastax.driver.core.ProtocolVersion;
+import com.datastax.driver.core.RemoteEndpointAwareNettySSLOptions;
+import com.datastax.driver.core.SSLOptions;
+import com.datastax.driver.core.Session;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
 import io.connect.scylladb.codec.StringTimeUuidCodec;
 import io.connect.scylladb.codec.StringUuidCodec;

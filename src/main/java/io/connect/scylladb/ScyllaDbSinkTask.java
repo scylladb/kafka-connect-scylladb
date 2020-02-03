@@ -1,11 +1,22 @@
 package io.connect.scylladb;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import com.datastax.driver.core.*;
+import com.datastax.driver.core.BatchStatement;
+import com.datastax.driver.core.BoundStatement;
+import com.datastax.driver.core.CodecRegistry;
+import com.datastax.driver.core.ProtocolVersion;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.ResultSetFuture;
+import com.datastax.driver.core.Statement;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.RetriableException;
@@ -80,9 +91,8 @@ public class ScyllaDbSinkTask extends SinkTask {
     int count = 0;
     final List<ResultSetFuture> futures = new ArrayList<>(records.size());
 
-    //create a map containing topic, map of partition number and list of records
-    Map<TopicPartition, List<BatchStatement>> topicBatchingMap = new HashMap<>();
-    Map<TopicPartition, Integer> topicRecordSizeMap = new HashMap<>();
+    //create a map containing topic, partition number and list of records
+    Map<TopicPartition, List<BatchStatement>> batchesPerTopicPartition = new HashMap<>();
 
     for (SinkRecord record : records) {
       TopicPartitionerHelper topicPartitionerHandler = new TopicPartitionerHelper(config, getValidSession());
@@ -93,20 +103,22 @@ public class ScyllaDbSinkTask extends SinkTask {
 
       BoundStatement boundStatement = topicPartitionerHandler.getBoundStatementForRecord(record);
 
-      int recordSize = topicRecordSizeMap.getOrDefault(new TopicPartition(topicName, partition), 0);
-      topicRecordSizeMap.put(new TopicPartition(topicName, partition),
-              recordSize + statementSize(boundStatement));
+      List<BatchStatement> batchStatementList = batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition)) ?
+              batchesPerTopicPartition.get(new TopicPartition(topicName, partition)) : new ArrayList<>();
+      BatchStatement batchStatement = batchStatementList.size() > 0 ?
+              batchStatementList.get(batchStatementList.size() - 1) : new BatchStatement(BatchStatement.Type.UNLOGGED);
 
-      List<BatchStatement> batchStatementList = topicBatchingMap.containsKey(new TopicPartition(topicName, partition)) ?
-              topicBatchingMap.get(new TopicPartition(topicName, partition)) : new ArrayList<>();
-
-      BatchStatement batchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
-      int totalBatchSize = topicRecordSizeMap.get(new TopicPartition(topicName, partition));
-      if (totalBatchSize <= config.maxBatchSize) {
-        batchStatement = batchStatementList.size() > 0 ?
-                batchStatementList.get(batchStatementList.size() - 1) : batchStatement;
+      int totalBatchSize = (batchStatement.size() > 0 ? statementSize(batchStatement) : 0)
+              + statementSize(boundStatement);
+      if (totalBatchSize <= (config.maxBatchSize * 1024)) {
+        batchStatement.add(boundStatement);
+        if (batchStatement.size() == 1) {
+          batchStatementList.add(batchStatement);
+        }
       } else {
-        topicRecordSizeMap.put(new TopicPartition(topicName, partition), 0);
+        BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
+        newBatchStatement.add(boundStatement);
+        batchStatementList.add(newBatchStatement);
       }
 
       log.trace("put() - Adding Bound Statement for {}:{}:{}",
@@ -115,15 +127,11 @@ public class ScyllaDbSinkTask extends SinkTask {
               record.kafkaOffset()
       );
 
-      batchStatement.add(boundStatement);
-      if (batchStatement.size() == 1) {
-        batchStatementList.add(batchStatement);
-      }
-      topicBatchingMap.put(new TopicPartition(topicName, partition), batchStatementList);
+      batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
 
     }
     
-    for (List<BatchStatement> batchStatementList : topicBatchingMap.values()) {
+    for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {
       for (BatchStatement batchStatement : batchStatementList) {
         log.trace("put() - Executing Batch Statement {} of size {}",
                 batchStatement, batchStatement.size());

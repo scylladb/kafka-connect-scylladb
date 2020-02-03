@@ -217,13 +217,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
 
-  public static final String MAX_BATCH_SIZE_CONFIG = "scylladb.max.batch.size";
-  public static final int MAX_BATCH_SIZE_DEFAULT = 5 * 1024;
+  public static final String MAX_BATCH_SIZE_CONFIG = "scylladb.max.batch.size.kb";
+  public static final int MAX_BATCH_SIZE_DEFAULT = 5;
   private static final String MAX_BATCH_SIZE_DOC = "Maximum size(in kilobytes) of a single batch "
           + "consisting ScyllaDB operations. Should be equal to batch_size_warn_threshold_in_kb "
           + "and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. "
-          + "The default value is 5kb, any change in this configuration should be accompanies by "
-          + "change in scylla.yaml";
+          + "The default value is set to 5kb, any change in this configuration should be accompanied by "
+          + "change in scylla.yaml.";
 
   private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
