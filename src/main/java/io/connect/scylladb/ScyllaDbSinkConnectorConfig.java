@@ -218,12 +218,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "insert operations in ScyllaDB  without TTL setting.";
 
   public static final String MAX_BATCH_SIZE_CONFIG = "scylladb.max.batch.size";
-  public static final int MAX_BATCH_SIZE_DEFAULT = 50 * 1024;
-  private static final String MAX_BATCH_SIZE_DOC = "Maximum records size that could be send in one batch request to ScyllaDB";
+  public static final int MAX_BATCH_SIZE_DEFAULT = 5 * 1024;
+  private static final String MAX_BATCH_SIZE_DOC = "Maximum size(in kilobytes) of a single batch "
+          + "consisting ScyllaDB operations. Should be equal to batch_size_warn_threshold_in_kb "
+          + "and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. "
+          + "The default value is 5kb, any change in this configuration should be accompanies by "
+          + "change in scylla.yaml";
 
   private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
-  private static final String LOAD_BALANCING_LOCAL_DC_DOC = "The case-sensitive datacenter name (commonly dc1, dc2, etc.) local to the machine on which the connector is running.";
+  private static final String LOAD_BALANCING_LOCAL_DC_DOC = "The case-sensitive Data Center name "
+        + "local to the machine on which the connector is running.";
 
   public static final String CONNECTION_GROUP = "Connection";
   public static final String SSL_GROUP = "SSL";
@@ -469,11 +474,11 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     MAX_BATCH_SIZE_CONFIG,
                     ConfigDef.Type.INT,
                     MAX_BATCH_SIZE_DEFAULT,
-                    ConfigDef.Range.atLeast(0),
+                    ConfigDef.Range.atLeast(1),
                     ConfigDef.Importance.HIGH,
                     MAX_BATCH_SIZE_DOC,
                     WRITE_GROUP,
-                    4,
+                    5,
                     ConfigDef.Width.LONG,
                     "Max Batch Size");
   }

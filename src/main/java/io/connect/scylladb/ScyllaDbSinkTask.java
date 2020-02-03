@@ -5,7 +5,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import com.datastax.driver.core.BoundStatement;
+import com.datastax.driver.core.*;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.RetriableException;
@@ -14,9 +14,6 @@ import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.exceptions.TransportException;
 
 /**
@@ -93,11 +90,12 @@ public class ScyllaDbSinkTask extends SinkTask {
 
       final String topicName = record.topic();
       final int partition = record.kafkaPartition();
-      int recordSize = topicRecordSizeMap.getOrDefault(new TopicPartition(topicName, partition), 0);
-      topicRecordSizeMap.put(new TopicPartition(topicName, partition),
-              recordSize + (byte) (record.toString().length()));
 
       BoundStatement boundStatement = topicPartitionerHandler.getBoundStatementForRecord(record);
+
+      int recordSize = topicRecordSizeMap.getOrDefault(new TopicPartition(topicName, partition), 0);
+      topicRecordSizeMap.put(new TopicPartition(topicName, partition),
+              recordSize + statementSize(boundStatement));
 
       List<BatchStatement> batchStatementList = topicBatchingMap.containsKey(new TopicPartition(topicName, partition)) ?
               topicBatchingMap.get(new TopicPartition(topicName, partition)) : new ArrayList<>();
@@ -157,6 +155,10 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
+  }
+
+  private static int statementSize(Statement statement) {
+    return statement.requestSizeInBytes(ProtocolVersion.V4, CodecRegistry.DEFAULT_INSTANCE);
   }
 
   /**
