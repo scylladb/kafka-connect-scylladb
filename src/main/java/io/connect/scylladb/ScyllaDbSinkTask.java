@@ -102,33 +102,37 @@ public class ScyllaDbSinkTask extends SinkTask {
       final int partition = record.kafkaPartition();
 
       BoundStatement boundStatement = topicPartitionerHandler.getBoundStatementForRecord(record);
+      log.trace("put() - Adding Bound Statement for {}:{}:{}",
+              record.topic(),
+              record.kafkaPartition(),
+              record.kafkaOffset()
+      );
+      List<BatchStatement> batchStatementList =
+              batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition))
+                      ? batchesPerTopicPartition.get(new TopicPartition(topicName, partition))
+                      : new ArrayList<>();
 
-      List<BatchStatement> batchStatementList = batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition)) ?
-              batchesPerTopicPartition.get(new TopicPartition(topicName, partition)) : new ArrayList<>();
-      BatchStatement batchStatement = batchStatementList.size() > 0 ?
-              batchStatementList.get(batchStatementList.size() - 1) : new BatchStatement(BatchStatement.Type.UNLOGGED);
+      BatchStatement latestBatchStatement =
+              batchStatementList.size() > 0
+                      ? batchStatementList.get(batchStatementList.size() - 1)
+                      : new BatchStatement(BatchStatement.Type.UNLOGGED);
 
-      int totalBatchSize = (batchStatement.size() > 0 ? statementSize(batchStatement) : 0)
+      int totalBatchSize = (latestBatchStatement.size() > 0
+              ? statementSize(latestBatchStatement)
+              : 0)
               + statementSize(boundStatement);
+
       if (totalBatchSize <= (config.maxBatchSize * 1024)) {
-        batchStatement.add(boundStatement);
-        if (batchStatement.size() == 1) {
-          batchStatementList.add(batchStatement);
+        latestBatchStatement.add(boundStatement);
+        if (latestBatchStatement.size() == 1) {
+          batchStatementList.add(latestBatchStatement);
         }
       } else {
         BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
         newBatchStatement.add(boundStatement);
         batchStatementList.add(newBatchStatement);
       }
-
-      log.trace("put() - Adding Bound Statement for {}:{}:{}",
-              record.topic(),
-              record.kafkaPartition(),
-              record.kafkaOffset()
-      );
-
       batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
-
     }
     
     for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {

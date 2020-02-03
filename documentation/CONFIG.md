@@ -208,7 +208,7 @@ Connector-specific configuration properties are described below.
   Maximum size(in kilobytes) of a single batch consisting ScyllaDB operations. Should be equal to batch_size_warn_threshold_in_kb and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. The default value is set to 5kb, any change in this configuration should be accompanied by change in scylla.yaml.
 
   * Type: int
-  * Default: 5120
+  * Default: 5
   * Valid Values: [0,...]
   * Importance: high
 
