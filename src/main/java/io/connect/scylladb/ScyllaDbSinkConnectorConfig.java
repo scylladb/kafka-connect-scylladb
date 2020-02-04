@@ -45,7 +45,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final File trustStorePath;
   public final String offsetStorageTable;
   public final long statementTimeoutMs;
-  public final int maxBatchSize;
+  public final int maxBatchSizeKb;
   public final String loadBalancingLocalDc;
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
@@ -112,7 +112,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
     this.offsetStorageTable = getString(OFFSET_STORAGE_TABLE_CONF);
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
-    this.maxBatchSize = getInt(MAX_BATCH_SIZE_CONFIG);
+    this.maxBatchSizeKb = getInt(MAX_BATCH_SIZE_CONFIG);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
   }
 
@@ -480,7 +480,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     5,
                     ConfigDef.Width.LONG,
-                    "Max Batch Size");
+                    "Max Batch Size in KB");
   }
 
   public String ttl() {

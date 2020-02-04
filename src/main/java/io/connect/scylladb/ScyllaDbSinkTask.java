@@ -95,13 +95,13 @@ public class ScyllaDbSinkTask extends SinkTask {
     Map<TopicPartition, List<BatchStatement>> batchesPerTopicPartition = new HashMap<>();
 
     for (SinkRecord record : records) {
-      TopicPartitionerHelper topicPartitionerHandler = new TopicPartitionerHelper(config, getValidSession());
-      topicPartitionerHandler.validateRecord(record);
+      ScyllaDbSinkTaskHelper scyllaDbSinkTaskHelper = new ScyllaDbSinkTaskHelper(config, getValidSession());
+      scyllaDbSinkTaskHelper.validateRecord(record);
 
       final String topicName = record.topic();
       final int partition = record.kafkaPartition();
 
-      BoundStatement boundStatement = topicPartitionerHandler.getBoundStatementForRecord(record);
+      BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
       log.trace("put() - Adding Bound Statement for {}:{}:{}",
               record.topic(),
               record.kafkaPartition(),
@@ -122,7 +122,7 @@ public class ScyllaDbSinkTask extends SinkTask {
               : 0)
               + statementSize(boundStatement);
 
-      if (totalBatchSize <= (config.maxBatchSize * 1024)) {
+      if (totalBatchSize <= (config.maxBatchSizeKb * 1024)) {
         latestBatchStatement.add(boundStatement);
         if (latestBatchStatement.size() == 1) {
           batchStatementList.add(latestBatchStatement);

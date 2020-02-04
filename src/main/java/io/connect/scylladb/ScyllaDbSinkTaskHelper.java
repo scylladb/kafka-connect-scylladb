@@ -9,19 +9,18 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
 import java.util.Map;
 
-public class TopicPartitionerHelper {
+public class ScyllaDbSinkTaskHelper {
 
-  private static final Logger log = LoggerFactory.getLogger(TopicPartitionerHelper.class);
+  private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkTaskHelper.class);
 
   private ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig;
   private ScyllaDbSession session;
   private Map<TopicPartition, Integer> topicPartitionRecordSizeMap;
 
 
-  public TopicPartitionerHelper(ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig,
+  public ScyllaDbSinkTaskHelper(ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig,
                                 ScyllaDbSession session) {
     this.scyllaDbSinkConnectorConfig = scyllaDbSinkConnectorConfig;
     this.session = session;
