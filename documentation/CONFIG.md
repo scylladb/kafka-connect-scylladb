@@ -30,6 +30,13 @@ Connector-specific configuration properties are described below.
   * Importance: Medium
   * Default Value: 9042
   * Valid Values: ValidPort{start=1, end=65535}
+  
+``scylladb.loadbalancing.localdc``
+  The case-sensitive Data Center name local to the machine on which the connector is running.
+
+  * Type: string
+  * Default: ""
+  * Importance: high
 
 ``scylladb.security.enabled``
  
@@ -193,10 +200,17 @@ Connector-specific configuration properties are described below.
   If true, Kafka consumer offsets will be stored in ScyllaDB table. If false, connector will skip writing offset 
   information into ScyllaDB (this might imply duplicate writes into ScyllaDB when a task restarts).
 
-* Type: Boolean
-* Importance: Medium
-* Default Value: True
+  * Type: Boolean
+  * Importance: Medium
+  * Default Value: True
 
+``scylladb.max.batch.size.kb``
+  Maximum size(in kilobytes) of a single batch consisting ScyllaDB operations. Should be equal to batch_size_warn_threshold_in_kb and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. The default value is set to 5kb, any change in this configuration should be accompanied by change in scylla.yaml.
+
+  * Type: int
+  * Default: 5
+  * Valid Values: [1,...]
+  * Importance: high
 
 ###Confluent Platform Configurations.
 

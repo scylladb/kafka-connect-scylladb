@@ -3,28 +3,29 @@ package io.connect.scylladb;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import com.datastax.driver.core.BatchStatement;
+import com.datastax.driver.core.BoundStatement;
+import com.datastax.driver.core.CodecRegistry;
+import com.datastax.driver.core.ProtocolVersion;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.ResultSetFuture;
+import com.datastax.driver.core.Statement;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Struct;
-import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.datastax.driver.core.BatchStatement;
-import com.datastax.driver.core.BoundStatement;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.exceptions.TransportException;
-import com.google.common.base.Preconditions;
 
 /**
  * Task class for ScyllaDB Sink Connector.
@@ -90,67 +91,58 @@ public class ScyllaDbSinkTask extends SinkTask {
     int count = 0;
     final List<ResultSetFuture> futures = new ArrayList<>(records.size());
 
+    //create a map containing topic, partition number and list of records
+    Map<TopicPartition, List<BatchStatement>> batchesPerTopicPartition = new HashMap<>();
+
     for (SinkRecord record : records) {
-      if (null == record.key()) {
-        throw new DataException(
-                "Record with a null key was encountered. This connector requires that records "
-                + "from Kafka contain the keys for the ScyllaDb table. Please use a "
-                + "transformation like org.apache.kafka.connect.transforms.ValueToKey "
-                + "to create a key with the proper fields."
-        );
-      }
+      ScyllaDbSinkTaskHelper scyllaDbSinkTaskHelper = new ScyllaDbSinkTaskHelper(config, getValidSession());
+      scyllaDbSinkTaskHelper.validateRecord(record);
 
-      if (!(record.key() instanceof Struct) && !(record.key() instanceof Map)) {
-        throw new DataException(
-                "Key must be a struct or map. This connector requires that records from Kafka "
-                + "contain the keys for the ScyllaDb table. Please use a transformation like "
-                + "org.apache.kafka.connect.transforms.ValueToKey to create a key with the "
-                + "proper fields."
-        );
-      }
+      final String topicName = record.topic();
+      final int partition = record.kafkaPartition();
 
-      final String tableName = record.topic();
-      final BoundStatement boundStatement;
-      if (null == record.value()) {
-        if (config.deletesEnabled) {
-          if (this.getValidSession().tableExists(tableName)) {
-            final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-            final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.key());
-            Preconditions.checkState(
-                    state.parameters > 0,
-                    "key must contain the columns in the primary key."
-            );
-            boundStatement = state.statement;
-          } else {
-            log.warn("put() - table '{}' does not exist. Skipping delete.", tableName);
-            continue;
-          }
-        } else {
-          throw new DataException(
-                  String.format("Record with null value found for the key '%s'. If you are trying to delete the record set " +
-                                  "scylladb.deletes.enabled = true in your connector configuration.",
-                          record.key()));
-        }
-      } else {
-        this.getValidSession().createOrAlterTable(tableName, record.keySchema(), record.valueSchema());
-        final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName);
-        final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.value());
-        boundStatement = state.statement;
-      }
-
-      boundStatement.setConsistencyLevel(this.config.consistencyLevel);
-      if (null != record.timestamp()) {
-        boundStatement.setDefaultTimestamp(record.timestamp());
-      }
-      log.trace("put() - Executing Bound Statement for {}:{}:{}",
+      BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
+      log.trace("put() - Adding Bound Statement for {}:{}:{}",
               record.topic(),
               record.kafkaPartition(),
               record.kafkaOffset()
       );
-      ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(boundStatement);
-      futures.add(resultSetFuture);
+      List<BatchStatement> batchStatementList =
+              batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition))
+                      ? batchesPerTopicPartition.get(new TopicPartition(topicName, partition))
+                      : new ArrayList<>();
 
-      count++;
+      BatchStatement latestBatchStatement =
+              batchStatementList.size() > 0
+                      ? batchStatementList.get(batchStatementList.size() - 1)
+                      : new BatchStatement(BatchStatement.Type.UNLOGGED);
+
+      int totalBatchSize = (latestBatchStatement.size() > 0
+              ? statementSize(latestBatchStatement)
+              : 0)
+              + statementSize(boundStatement);
+
+      if (totalBatchSize <= (config.maxBatchSizeKb * 1024)) {
+        latestBatchStatement.add(boundStatement);
+        if (latestBatchStatement.size() == 1) {
+          batchStatementList.add(latestBatchStatement);
+        }
+      } else {
+        BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
+        newBatchStatement.add(boundStatement);
+        batchStatementList.add(newBatchStatement);
+      }
+      batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
+    }
+    
+    for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {
+      for (BatchStatement batchStatement : batchStatementList) {
+        log.trace("put() - Executing Batch Statement {} of size {}",
+                batchStatement, batchStatement.size());
+        ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(batchStatement);
+        futures.add(resultSetFuture);
+        count++;
+      }
     }
 
     if (count > 0) {
@@ -175,6 +167,10 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
+  }
+
+  private static int statementSize(Statement statement) {
+    return statement.requestSizeInBytes(ProtocolVersion.V4, CodecRegistry.DEFAULT_INSTANCE);
   }
 
   /**
