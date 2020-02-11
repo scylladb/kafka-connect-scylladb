@@ -124,21 +124,16 @@ public class ScyllaDbSinkTask extends SinkTask {
               : 0)
               + statementSize(boundStatement);
 
-      boolean putBoundStatementInBatch = ((boundStatement.getDefaultTimestamp() != Long.MIN_VALUE
-              && latestBatchStatement.size() > 0 && (boundStatement.getDefaultTimestamp() - Iterables
-              .get(latestBatchStatement.getStatements(), 0).getDefaultTimestamp()
-              <= config.timestampThresholdMs)) || boundStatement.getDefaultTimestamp() == Long.MIN_VALUE);
-      if (totalBatchSize <= configuredMaxBatchSize && putBoundStatementInBatch) {
+      boolean shouldWriteStatementInCurrentBatch = latestBatchStatement.size() > 0
+              && isRecordWithinTimestampResolution(boundStatement, latestBatchStatement);
+
+      if (totalBatchSize <= configuredMaxBatchSize && shouldWriteStatementInCurrentBatch) {
         latestBatchStatement.add(boundStatement);
-        if (boundStatement.getDefaultTimestamp() != Long.MIN_VALUE) {
-          latestBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
-        }
+        latestBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
       } else {
         BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
         newBatchStatement.add(boundStatement);
-        if (boundStatement.getDefaultTimestamp() != Long.MIN_VALUE) {
-          newBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
-        }
+        newBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
         batchStatementList.add(newBatchStatement);
       }
       batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
@@ -177,6 +172,13 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
+  }
+
+  private boolean isRecordWithinTimestampResolution(BoundStatement boundStatement,
+                                                    BatchStatement latestBatchStatement) {
+    long timeDiffFromInitialRecord = boundStatement.getDefaultTimestamp()
+            - Iterables.get(latestBatchStatement.getStatements(), 0).getDefaultTimestamp();
+    return timeDiffFromInitialRecord <= config.timestampResolutionMs;
   }
 
   private static int statementSize(Statement statement) {

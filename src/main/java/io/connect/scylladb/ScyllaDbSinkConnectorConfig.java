@@ -47,7 +47,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final long statementTimeoutMs;
   public final int maxBatchSizeKb;
   public final String loadBalancingLocalDc;
-  public final long timestampThresholdMs;
+  public final long timestampResolutionMs;
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
       ImmutableMap.of(
@@ -115,7 +115,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
     this.maxBatchSizeKb = getInt(MAX_BATCH_SIZE_CONFIG);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
-    this.timestampThresholdMs = getLong(TIMESTAMP_THRESHOLD_MS_CONF);
+    this.timestampResolutionMs = getLong(TIMESTAMP_RESOLUTION_MS_CONF);
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
@@ -227,8 +227,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "The default value is set to 5kb, any change in this configuration should be accompanied by "
           + "change in scylla.yaml.";
 
-  public static final String TIMESTAMP_THRESHOLD_MS_CONF = "scylladb.timestamp.threshold.ms";
-  private static final String TIMESTAMP_THRESHOLD_MS_DOC = "The timestamp threshold value between two batch of record.";
+  public static final String TIMESTAMP_RESOLUTION_MS_CONF = "scylladb.timestamp.resolution.ms";
+  private static final String TIMESTAMP_RESOLUTION_MS_DOC = "The timestamp threshold value between two batch of record.";
 
   private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
@@ -488,12 +488,12 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.LONG,
                     "Max Batch Size in KB")
             .define(
-                    TIMESTAMP_THRESHOLD_MS_CONF,
+                    TIMESTAMP_RESOLUTION_MS_CONF,
                     ConfigDef.Type.LONG,
                     5,
                     ConfigDef.Range.atLeast(0),
                     ConfigDef.Importance.LOW,
-                    TIMESTAMP_THRESHOLD_MS_DOC,
+                    TIMESTAMP_RESOLUTION_MS_DOC,
                     WRITE_GROUP,
                     6,
                     ConfigDef.Width.SHORT,

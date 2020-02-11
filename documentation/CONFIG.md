@@ -213,7 +213,7 @@ Connector-specific configuration properties are described below.
   * Valid Values: [1,...]
   * Importance: high
   
-``scylladb.timestamp.threshold.ms``
+``scylladb.timestamp.resolution.ms``
 
   The timestamp threshold value between two batch of record.
 
