@@ -32,7 +32,7 @@ Connector-specific configuration properties are described below.
   * Valid Values: ValidPort{start=1, end=65535}
   
 ``scylladb.loadbalancing.localdc``
-  The case-sensitive Data Center name local to the machine on which the connector is running.
+  The case-sensitive Data Center name local to the machine on which the connector is running. It is a recommended config if we have more than one DC.
 
   * Type: string
   * Default: ""
@@ -185,6 +185,7 @@ Connector-specific configuration properties are described below.
 
   * Type: Long
   * Importance: Low
+  * Valid Values: [0,...]
   * Default Value: 30000
 
 ``scylladb.ttl``
@@ -211,6 +212,15 @@ Connector-specific configuration properties are described below.
   * Default: 5
   * Valid Values: [1,...]
   * Importance: high
+  
+``scylladb.timestamp.resolution.ms``
+
+  The timestamp threshold value between two batch of record.
+
+  * Type: Long
+  * Importance: Low
+  * Valid Values: [0,...]
+  * Default Value: 5
 
 ###Confluent Platform Configurations.
 

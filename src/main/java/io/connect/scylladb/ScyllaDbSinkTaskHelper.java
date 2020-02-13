@@ -74,13 +74,7 @@ public class ScyllaDbSinkTaskHelper {
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.value());
       boundStatement = state.statement;
     }
-
-    boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
-    if (null != record.timestamp()) {
-      boundStatement.setDefaultTimestamp(record.timestamp());
-    }
-
+    boundStatement.setDefaultTimestamp(record.timestamp());
     return boundStatement;
   }
-
 }

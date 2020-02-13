@@ -47,6 +47,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final long statementTimeoutMs;
   public final int maxBatchSizeKb;
   public final String loadBalancingLocalDc;
+  public final long timestampResolutionMs;
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
       ImmutableMap.of(
@@ -114,6 +115,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
     this.maxBatchSizeKb = getInt(MAX_BATCH_SIZE_CONFIG);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
+    this.timestampResolutionMs = getLong(TIMESTAMP_RESOLUTION_MS_CONF);
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
@@ -156,7 +158,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Set scylladb.security.enable = true to use this config.";
 
   public static final String PASSWORD_CONFIG = "scylladb.password";
-  private static final String PASSWORD_DOC = "The password to connect to Scylladb with. "
+  private static final String PASSWORD_DOC = "The password to connect to ScyllaDB with. "
           + "Set scylladb.security.enable = true to use this config.";
 
   public static final String KEYSPACE_CONFIG = "scylladb.keyspace";
@@ -225,10 +227,14 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "The default value is set to 5kb, any change in this configuration should be accompanied by "
           + "change in scylla.yaml.";
 
+  public static final String TIMESTAMP_RESOLUTION_MS_CONF = "scylladb.timestamp.resolution.ms";
+  private static final String TIMESTAMP_RESOLUTION_MS_DOC = "The timestamp threshold value between two batch of record.";
+
   private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
   private static final String LOAD_BALANCING_LOCAL_DC_DOC = "The case-sensitive Data Center name "
-        + "local to the machine on which the connector is running.";
+          + "local to the machine on which the connector is running. It is a recommended config if "
+          + "we have more than one DC.";
 
   public static final String CONNECTION_GROUP = "Connection";
   public static final String SSL_GROUP = "SSL";
@@ -438,7 +444,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     TABLE_GROUP,
                     2,
                     ConfigDef.Width.SHORT,
-                    "Offset storage table.")
+                    "Offset storage table")
             .define(
                     EXECUTE_STATEMENT_TIMEOUT_MS_CONF,
                     ConfigDef.Type.LONG,
@@ -449,7 +455,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     2,
                     ConfigDef.Width.SHORT,
-                    "Execute statement timeout.")
+                    "Execute statement timeout")
             .define(
                     TTL_CONFIG,
                     ConfigDef.Type.STRING,
@@ -480,7 +486,18 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     5,
                     ConfigDef.Width.LONG,
-                    "Max Batch Size in KB");
+                    "Max Batch Size in KB")
+            .define(
+                    TIMESTAMP_RESOLUTION_MS_CONF,
+                    ConfigDef.Type.LONG,
+                    5,
+                    ConfigDef.Range.atLeast(0),
+                    ConfigDef.Importance.LOW,
+                    TIMESTAMP_RESOLUTION_MS_DOC,
+                    WRITE_GROUP,
+                    6,
+                    ConfigDef.Width.SHORT,
+                    "Timestamp Threshold in MS");
   }
 
   public String ttl() {

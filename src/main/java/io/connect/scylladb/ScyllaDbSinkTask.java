@@ -17,6 +17,7 @@ import com.datastax.driver.core.ProtocolVersion;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Statement;
+import com.google.common.collect.Iterables;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.RetriableException;
@@ -94,6 +95,7 @@ public class ScyllaDbSinkTask extends SinkTask {
     //create a map containing topic, partition number and list of records
     Map<TopicPartition, List<BatchStatement>> batchesPerTopicPartition = new HashMap<>();
 
+    int configuredMaxBatchSize = config.maxBatchSizeKb * 1024;
     for (SinkRecord record : records) {
       ScyllaDbSinkTaskHelper scyllaDbSinkTaskHelper = new ScyllaDbSinkTaskHelper(config, getValidSession());
       scyllaDbSinkTaskHelper.validateRecord(record);
@@ -122,14 +124,16 @@ public class ScyllaDbSinkTask extends SinkTask {
               : 0)
               + statementSize(boundStatement);
 
-      if (totalBatchSize <= (config.maxBatchSizeKb * 1024)) {
+      boolean shouldWriteStatementInCurrentBatch = latestBatchStatement.size() > 0
+              && isRecordWithinTimestampResolution(boundStatement, latestBatchStatement);
+
+      if (totalBatchSize <= configuredMaxBatchSize && shouldWriteStatementInCurrentBatch) {
         latestBatchStatement.add(boundStatement);
-        if (latestBatchStatement.size() == 1) {
-          batchStatementList.add(latestBatchStatement);
-        }
+        latestBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
       } else {
         BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
         newBatchStatement.add(boundStatement);
+        newBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
         batchStatementList.add(newBatchStatement);
       }
       batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
@@ -137,6 +141,7 @@ public class ScyllaDbSinkTask extends SinkTask {
     
     for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {
       for (BatchStatement batchStatement : batchStatementList) {
+        batchStatement.setConsistencyLevel(config.consistencyLevel);
         log.trace("put() - Executing Batch Statement {} of size {}",
                 batchStatement, batchStatement.size());
         ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(batchStatement);
@@ -167,6 +172,13 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
+  }
+
+  private boolean isRecordWithinTimestampResolution(BoundStatement boundStatement,
+                                                    BatchStatement latestBatchStatement) {
+    long timeDiffFromInitialRecord = boundStatement.getDefaultTimestamp()
+            - Iterables.get(latestBatchStatement.getStatements(), 0).getDefaultTimestamp();
+    return timeDiffFromInitialRecord <= config.timestampResolutionMs;
   }
 
   private static int statementSize(Statement statement) {

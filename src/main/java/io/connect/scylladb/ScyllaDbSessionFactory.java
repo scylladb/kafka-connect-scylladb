@@ -46,6 +46,9 @@ public class ScyllaDbSessionFactory {
       clusterBuilder.withLoadBalancingPolicy(
               DCAwareRoundRobinPolicy.builder()
                   .withLocalDc(config.loadBalancingLocalDc).build());
+    } else {
+      log.warn("`scylladb.loadbalancing.localdc` has not been configured, "
+              + "which is recommended configuration in case of more than one DC.");
     }
     if (config.securityEnabled) {
       clusterBuilder.withCredentials(config.username, config.password);
