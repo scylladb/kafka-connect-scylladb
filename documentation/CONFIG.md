@@ -206,7 +206,9 @@ Connector-specific configuration properties are described below.
   * Default Value: True
 
 ``scylladb.max.batch.size.kb``
-  Maximum size(in kilobytes) of a single batch consisting ScyllaDB operations. Should be equal to batch_size_warn_threshold_in_kb and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. The default value is set to 5kb, any change in this configuration should be accompanied by change in scylla.yaml.
+  Maximum size(in kilobytes) of a single batch consisting ScyllaDB operations. This should be equal to 
+  batch_size_warn_threshold_in_kb and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. 
+  The default value is set to 5kb, any change in this configuration should be accompanied by change in scylla.yaml.
 
   * Type: int
   * Default: 5
@@ -215,12 +217,13 @@ Connector-specific configuration properties are described below.
   
 ``scylladb.timestamp.resolution.ms``
 
-  The timestamp threshold value between two batch of record.
+  The batch resolution time, in case of this value being zero, the Connector will not batch the records, 
+  else, kafka records within the resolution time will be batched. Default value is set to zero.
 
   * Type: Long
   * Importance: Low
   * Valid Values: [0,...]
-  * Default Value: 5
+  * Default Value: 0
 
 ###Confluent Platform Configurations.
 
