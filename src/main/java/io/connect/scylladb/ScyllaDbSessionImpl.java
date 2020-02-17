@@ -14,9 +14,11 @@ import com.datastax.driver.core.querybuilder.Delete;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
+import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -91,8 +93,8 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public void createOrAlterTable(String tableName, Schema keySchema, Schema valueSchema) {
-    this.schemaBuilder.build(tableName, keySchema, valueSchema);
+  public void createOrAlterTable(String tableName, SinkRecord record, TopicConfigs topicConfigs) {
+    this.schemaBuilder.build(tableName, record, topicConfigs);
   }
 
   @Override
@@ -131,29 +133,39 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     );
   }
 
-  private PreparedStatement createInsertPreparedStatement(String tableName) {
+  private PreparedStatement createInsertPreparedStatement(String tableName, TopicConfigs topicConfigs) {
     Insert statement = QueryBuilder.insertInto(config.keyspace, tableName);
     TableMetadata.Table tableMetadata = tableMetadata(tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
       statement.value(columnMetadata.getName(), QueryBuilder.bindMarker(columnMetadata.getName()));
     }
     log.debug("insert() - Preparing statement. '{}'", statement);
-    return (config.ttl() == null) ? session.prepare(statement) :
-        session.prepare(statement.using(QueryBuilder.ttl(Integer.parseInt(config.ttl()))));
+    if (topicConfigs != null) {
+      return (topicConfigs.getTtl() == null) ? session.prepare(statement) :
+              session.prepare(statement.using(QueryBuilder.ttl(topicConfigs.getTtl())));
+    } else {
+      return (config.ttl == null) ? session.prepare(statement) :
+              session.prepare(statement.using(QueryBuilder.ttl(config.ttl)));
+    }
   }
 
   @Override
-  public RecordToBoundStatementConverter insert(String tableName) {
-    return this.insertStatementCache.computeIfAbsent(
-        tableName,
-        new Function<String, RecordToBoundStatementConverter>() {
-          @Override
-          public RecordToBoundStatementConverter apply(String tableName) {
-            PreparedStatement preparedStatement = createInsertPreparedStatement(tableName);
-            return new RecordToBoundStatementConverter(preparedStatement);
-          }
-        }
-    );
+  public RecordToBoundStatementConverter insert(String tableName, TopicConfigs topicConfigs) {
+    if (topicConfigs != null && topicConfigs.getTtl() != null) {
+      PreparedStatement preparedStatement = createInsertPreparedStatement(tableName, topicConfigs);
+      return new RecordToBoundStatementConverter(preparedStatement);
+    } else {
+      return this.insertStatementCache.computeIfAbsent(
+              tableName,
+              new Function<String, RecordToBoundStatementConverter>() {
+                @Override
+                public RecordToBoundStatementConverter apply(String tableName) {
+                  PreparedStatement preparedStatement = createInsertPreparedStatement(tableName, topicConfigs);
+                  return new RecordToBoundStatementConverter(preparedStatement);
+                }
+              }
+      );
+    }
   }
 
   private PreparedStatement offsetPreparedStatement;
@@ -171,7 +183,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
       final BoundStatement statement;
       if (null == this.offsetPreparedStatement) {
         this.offsetPreparedStatement =
-            createInsertPreparedStatement(this.config.offsetStorageTable);
+            createInsertPreparedStatement(this.config.offsetStorageTable, null);
       }
       log.debug(
           "addOffsetsToBatch() - Setting offset to {}:{}:{}",

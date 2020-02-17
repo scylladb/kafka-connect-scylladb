@@ -13,6 +13,7 @@ import java.util.concurrent.TimeoutException;
 import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.CodecRegistry;
+import com.datastax.driver.core.ConsistencyLevel;
 import com.datastax.driver.core.ProtocolVersion;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
@@ -104,7 +105,8 @@ public class ScyllaDbSinkTask extends SinkTask {
       final int partition = record.kafkaPartition();
 
       BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
-      log.trace("put() - Adding Bound Statement for {}:{}:{}",
+      log.trace("put() - Adding Bound Statement {} for {}:{}:{}",
+              boundStatement.preparedStatement().getQueryString(),
               record.topic(),
               record.kafkaPartition(),
               record.kafkaOffset()
@@ -141,9 +143,14 @@ public class ScyllaDbSinkTask extends SinkTask {
     
     for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {
       for (BatchStatement batchStatement : batchStatementList) {
-        batchStatement.setConsistencyLevel(config.consistencyLevel);
-        log.trace("put() - Executing Batch Statement {} of size {}",
-                batchStatement, batchStatement.size());
+        ConsistencyLevel consistencyLevel = config.consistencyLevel;
+        Statement firstStatement = batchStatement.getStatements().iterator().next();
+        if (config.topicWiseConfigs.containsKey(firstStatement.getKeyspace())) {
+          consistencyLevel = firstStatement.getConsistencyLevel();
+        }
+        batchStatement.setConsistencyLevel(consistencyLevel);
+        log.trace("put() - Executing Batch Statement with Consistency Level {} of size {}",
+                consistencyLevel, batchStatement.size());
         ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(batchStatement);
         futures.add(resultSetFuture);
         count++;

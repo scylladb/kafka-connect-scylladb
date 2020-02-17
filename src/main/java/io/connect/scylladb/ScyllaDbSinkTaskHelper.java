@@ -2,6 +2,7 @@ package io.connect.scylladb;
 
 import com.datastax.driver.core.BoundStatement;
 import com.google.common.base.Preconditions;
+import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
@@ -49,11 +50,20 @@ public class ScyllaDbSinkTaskHelper {
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     final String tableName = record.topic();
     BoundStatement boundStatement = null;
+    TopicConfigs topicConfigs = null;
+    if (scyllaDbSinkConnectorConfig.topicWiseConfigs.containsKey(tableName)) {
+      topicConfigs = scyllaDbSinkConnectorConfig.topicWiseConfigs.get(tableName);
+      if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
+        topicConfigs.setTablePartitionAndColumnValues(record);
+      }
+      topicConfigs.setTtlAndTimeStampIfAvailable(record);
+    }
     if (null == record.value()) {
-      if (scyllaDbSinkConnectorConfig.deletesEnabled) {
+      if ((topicConfigs != null && topicConfigs.isDeletesEnabled())
+              || scyllaDbSinkConnectorConfig.deletesEnabled) {
         if (this.session.tableExists(tableName)) {
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.key());
+          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, "delete");
           Preconditions.checkState(
                   state.parameters > 0,
                   "key must contain the columns in the primary key."
@@ -69,12 +79,21 @@ public class ScyllaDbSinkTaskHelper {
                         record.key()));
       }
     } else {
-      this.session.createOrAlterTable(tableName, record.keySchema(), record.valueSchema());
-      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName);
-      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.value());
+      this.session.createOrAlterTable(tableName, record, topicConfigs);
+      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
+      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, "insert");
       boundStatement = state.statement;
     }
-    boundStatement.setDefaultTimestamp(record.timestamp());
+
+    if (topicConfigs != null) {
+      log.trace("Topic mapped Consistency level : " + topicConfigs.getConsistencyLevel()
+              + "Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
+      boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
+      boundStatement.setDefaultTimestamp(topicConfigs.getTimeStamp());
+    } else {
+      boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
+      boundStatement.setDefaultTimestamp(record.timestamp());
+    }
     return boundStatement;
   }
 }
