@@ -61,10 +61,10 @@ public abstract class RecordConverter<T> {
     public T convert(SinkRecord record, TopicConfigs topicConfigs, String operationType) {
         Object recordObject = "delete".equals(operationType) ? record.key() : record.value();
         T result = this.newValue();
-        Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap =
-                (null == topicConfigs) ? null : topicConfigs.getTableColumnMap();
+        Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap = null;
         Preconditions.checkNotNull(recordObject, ("delete".equals(operationType) ? "key " : "value ") + "cannot be null.");
-        if (topicConfigs != null) {
+        if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
+            columnDetailsMap = topicConfigs.getTableColumnMap();
             Preconditions.checkNotNull(record.key(), "key cannot be null.");
             findRecordTypeAndConvert(result, record.key(), topicConfigs.getTablePartitionKeyMap());
             for (Header header : record.headers()) {

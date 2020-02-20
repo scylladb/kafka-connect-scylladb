@@ -122,7 +122,7 @@ Example:
 ```
 kafka-avro-console-producer 
 --broker-list localhost:9092 
---topic example  
+--topic topic1  
 --property parse.key=true 
 --property key.schema='{"type":"record",name":"key_schema","fields":[{"name":"id","type":"int"}]}' 
 --property "key.separator=$" 
@@ -132,7 +132,7 @@ kafka-avro-console-producer
 ```
 
 Output upon running the select query in ScyllaDB:
-select * from demo.example;
+select * from test.topic1;
 
 ```
  id | firstname | lastname

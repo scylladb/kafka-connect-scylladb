@@ -59,8 +59,9 @@ public class ScyllaDbSinkTaskHelper {
       topicConfigs.setTtlAndTimeStampIfAvailable(record);
     }
     if (null == record.value()) {
-      if ((topicConfigs != null && topicConfigs.isDeletesEnabled())
-              || scyllaDbSinkConnectorConfig.deletesEnabled) {
+      boolean deletionEnabled = topicConfigs != null
+              ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
+      if (deletionEnabled) {
         if (this.session.tableExists(tableName)) {
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
           final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, "delete");
@@ -74,8 +75,9 @@ public class ScyllaDbSinkTaskHelper {
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set " +
-                                "scylladb.deletes.enabled = true in your connector configuration.",
+                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                                + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
+                                + "your connector configuration.",
                         record.key()));
       }
     } else {
@@ -87,7 +89,7 @@ public class ScyllaDbSinkTaskHelper {
 
     if (topicConfigs != null) {
       log.trace("Topic mapped Consistency level : " + topicConfigs.getConsistencyLevel()
-              + "Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
+              + ", Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
       boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
       boundStatement.setDefaultTimestamp(topicConfigs.getTimeStamp());
     } else {
