@@ -27,6 +27,8 @@
         <kafka.version>2.4.0</kafka.version>
         <junit.version>5.2.0</junit.version>
         <scylladb.version>3.7.1-scylla-2</scylladb.version>
+        <netty.version>4.0.56.Final</netty.version>
+        <netty-tcnative.version>2.0.7.Final</netty-tcnative.version>
         <skipIntegrationTests>false</skipIntegrationTests>
     </properties>
 
@@ -160,6 +162,38 @@
             <groupId>com.scylladb</groupId>
             <artifactId>scylla-driver-core</artifactId>
             <version>${scylladb.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-handler</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-transport-native-epoll</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-tcnative</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport-native-epoll</artifactId>
+            <version>${netty.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-tcnative</artifactId>
+            <version>${netty-tcnative.version}</version>
         </dependency>
 
         <dependency>
