@@ -3,6 +3,7 @@ package io.connect.scylladb;
 import com.datastax.driver.core.BoundStatement;
 import com.google.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
@@ -64,7 +65,7 @@ public class ScyllaDbSinkTaskHelper {
       if (deletionEnabled) {
         if (this.session.tableExists(tableName)) {
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, "delete");
+          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION);
           Preconditions.checkState(
                   state.parameters > 0,
                   "key must contain the columns in the primary key."
@@ -83,7 +84,7 @@ public class ScyllaDbSinkTaskHelper {
     } else {
       this.session.createOrAlterTable(tableName, record, topicConfigs);
       final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
-      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, "insert");
+      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
     }
 
