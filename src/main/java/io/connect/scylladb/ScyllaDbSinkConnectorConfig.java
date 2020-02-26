@@ -109,9 +109,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.cipherSuites = getList(SSL_CIPHER_SUITES_CONFIG);
 
     final String certFilePath = this.getString(SSL_OPENSLL_KEYCERTCHAIN_CONFIG);
-    this.certFilePath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(certFilePath);
+    this.certFilePath = Strings.isNullOrEmpty(certFilePath) ? null : new File(certFilePath);
     final String privateKeyPath = this.getString(SSL_OPENSLL_PRIVATEKEY_CONFIG);
-    this.privateKeyPath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(privateKeyPath);
+    this.privateKeyPath = Strings.isNullOrEmpty(privateKeyPath) ? null : new File(privateKeyPath);
 
     final String compression = getString(COMPRESSION_CONFIG);
     this.compression = CLIENT_COMPRESSION.get(compression);
