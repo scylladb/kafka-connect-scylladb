@@ -2,6 +2,7 @@ package io.connect.scylladb;
 
 import com.google.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -59,10 +60,12 @@ public abstract class RecordConverter<T> {
     protected abstract void setNullField(T result, String name);
 
     public T convert(SinkRecord record, TopicConfigs topicConfigs, String operationType) {
-        Object recordObject = "delete".equals(operationType) ? record.key() : record.value();
+        Object recordObject = ScyllaDbConstants.DELETE_OPERATION.equals(operationType) ?
+                record.key() : record.value();
         T result = this.newValue();
         Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap = null;
-        Preconditions.checkNotNull(recordObject, ("delete".equals(operationType) ? "key " : "value ") + "cannot be null.");
+        Preconditions.checkNotNull(recordObject,
+                (ScyllaDbConstants.DELETE_OPERATION.equals(operationType) ? "key " : "value ") + "cannot be null.");
         if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
             columnDetailsMap = topicConfigs.getTableColumnMap();
             Preconditions.checkNotNull(record.key(), "key cannot be null.");
