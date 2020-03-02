@@ -43,7 +43,7 @@ public class ScyllaDbSinkConnectorIT {
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorIT.class);
 
-  static final String SCYLLA_DB_CONTACT_POINT = "172.18.0.2";
+  static final String SCYLLA_DB_CONTACT_POINT = "172.18.0.3";
   static final int SCYLLA_DB_PORT = 9042;
   static final String SCYLLADB_KEYSPACE = "testkeyspace";
   private static final String SCYLLADB_OFFSET_TABLE = "kafka_connect_offsets";
@@ -164,6 +164,60 @@ public class ScyllaDbSinkConnectorIT {
             .map(RowValidator::of)
             .collect(Collectors.toList());
     this.task.put(finalRecordsList);
+    Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
+    assertEquals(true, tableExists);
+    verify(this.sinkTaskContext, times(1)).requestCommit();
+    verify(this.sinkTaskContext, times(1)).assignment();
+  }
+
+  @Test
+  public void insertWithTopicMapping() {
+    final Map<String, String> settings = settings();
+    //adding mapping related configs
+    settings.put("topic.insertTestingWithMapping.testkeyspace.my_table.mapping", "userid=key.id, "
+            + "userfirstname=value.firstname, userlastname=value.lastname, userage=value.age, __ttl=value.time");
+    settings.put("topic.insertTestingWithMapping.testkeyspace.my_table.consistencyLevel", "LOCAL_ONE");
+    settings.put("topic.insertTestingWithMapping.testkeyspace.my_table.ttlSeconds", "3423");
+    settings.put("topic.insertTestingWithMapping.testkeyspace.my_table.deletesEnabled", "false");
+    connector = new ScyllaDbSinkConnector();
+    connector.start(settings);
+    final String topic = "insertTestingWithMapping";
+    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 3)));
+    this.task.start(settings);
+    List<SinkRecord> records = ImmutableList.of(
+            write(
+                    topic,
+                    struct("key",
+                            "id", Schema.Type.INT64, true, 12345L
+                    ), struct("value",
+                            "firstname", Schema.Type.STRING, true, "test",
+                            "lastname", Schema.Type.STRING, true, "user",
+                            "age", Schema.Type.INT64, true, 1234L,
+                            "time", Schema.Type.INT32, true, 1000
+                    )
+            ),
+            write(topic,
+                    null,
+                    asMap(
+                            struct("key",
+                                    "id", Schema.Type.INT64, true, 67890L
+                            )
+                    ),
+                    null,
+                    asMap(
+                            struct("key",
+                                    "firstname", Schema.Type.STRING, true, "another",
+                                    "lastname", Schema.Type.STRING, true, "user",
+                                    "age", Schema.Type.INT64, true, 10L,
+                                    "time", Schema.Type.INT32, true, 10
+                            )
+                    )
+            )
+    );
+    this.validations = records.stream()
+            .map(RowValidator::of)
+            .collect(Collectors.toList());
+    this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();

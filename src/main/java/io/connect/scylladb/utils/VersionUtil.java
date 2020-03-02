@@ -1,4 +1,4 @@
-package io.connect.scylladb;
+package io.connect.scylladb.utils;
 
 public class VersionUtil {
     public static String getVersion() {

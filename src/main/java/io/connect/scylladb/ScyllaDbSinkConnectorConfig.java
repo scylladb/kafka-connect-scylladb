@@ -1,9 +1,13 @@
 package io.connect.scylladb;
 
 import java.io.File;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
+import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 
@@ -48,6 +52,12 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final int maxBatchSizeKb;
   public final String loadBalancingLocalDc;
   public final long timestampResolutionMs;
+  public final Map<String, TopicConfigs> topicWiseConfigs;
+  public final Integer ttl;
+
+  private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
+
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
       ImmutableMap.of(
@@ -78,6 +88,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.deletesEnabled = getBoolean(DELETES_ENABLE_CONFIG);
 
     this.keyspace = getString(KEYSPACE_CONFIG);
+    this.ttl = getInt(TTL_CONFIG);
 
     final String trustStorePath = this.getString(SSL_TRUSTSTORE_PATH_CONFIG);
     this.trustStorePath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(trustStorePath);
@@ -116,6 +127,20 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.maxBatchSizeKb = getInt(MAX_BATCH_SIZE_CONFIG);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.timestampResolutionMs = getLong(TIMESTAMP_RESOLUTION_MS_CONF);
+    Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
+    for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
+      final String name2 = entry.getKey();
+      if (name2.startsWith("topic.")) {
+        final String topicName = this.tryMatchTopicName(name2);
+        final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
+        topicMap.put(name2.split("\\.")[name2.split("\\.").length - 1], entry.getValue());
+      }
+    }
+    topicWiseConfigs = new HashMap<>();
+    for (Map.Entry<String, Map<String, String>> topicWiseConfig : topicWiseConfigsMap.entrySet()) {
+      TopicConfigs topicConfigs = new TopicConfigs(topicWiseConfig.getValue(), this);
+      topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
+    }
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
@@ -502,8 +527,12 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     "Timestamp Threshold in MS");
   }
 
-  public String ttl() {
-    return getString(TTL_CONFIG);
+  private String tryMatchTopicName(final String name) {
+    final Matcher m = ScyllaDbSinkConnectorConfig.TOPIC_KS_TABLE_SETTING_PATTERN.matcher(name);
+    if (m.matches()) {
+      return m.group(1);
+    }
+    throw new IllegalArgumentException("The setting: " + name + " does not match topic.keyspace.table nor topic.codec regular expression pattern");
   }
 
   public boolean isOffsetEnabledInScyllaDb() {

@@ -2,6 +2,8 @@ package io.connect.scylladb;
 
 import com.datastax.driver.core.BoundStatement;
 import com.google.common.base.Preconditions;
+import io.connect.scylladb.topictotable.TopicConfigs;
+import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
@@ -49,11 +51,21 @@ public class ScyllaDbSinkTaskHelper {
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     final String tableName = record.topic();
     BoundStatement boundStatement = null;
+    TopicConfigs topicConfigs = null;
+    if (scyllaDbSinkConnectorConfig.topicWiseConfigs.containsKey(tableName)) {
+      topicConfigs = scyllaDbSinkConnectorConfig.topicWiseConfigs.get(tableName);
+      if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
+        topicConfigs.setTablePartitionAndColumnValues(record);
+      }
+      topicConfigs.setTtlAndTimeStampIfAvailable(record);
+    }
     if (null == record.value()) {
-      if (scyllaDbSinkConnectorConfig.deletesEnabled) {
+      boolean deletionEnabled = topicConfigs != null
+              ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
+      if (deletionEnabled) {
         if (this.session.tableExists(tableName)) {
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.key());
+          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION);
           Preconditions.checkState(
                   state.parameters > 0,
                   "key must contain the columns in the primary key."
@@ -64,17 +76,27 @@ public class ScyllaDbSinkTaskHelper {
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set " +
-                                "scylladb.deletes.enabled = true in your connector configuration.",
+                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                                + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
+                                + "your connector configuration.",
                         record.key()));
       }
     } else {
-      this.session.createOrAlterTable(tableName, record.keySchema(), record.valueSchema());
-      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName);
-      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record.value());
+      this.session.createOrAlterTable(tableName, record, topicConfigs);
+      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
+      final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
     }
-    boundStatement.setDefaultTimestamp(record.timestamp());
+
+    if (topicConfigs != null) {
+      log.trace("Topic mapped Consistency level : " + topicConfigs.getConsistencyLevel()
+              + ", Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
+      boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
+      boundStatement.setDefaultTimestamp(topicConfigs.getTimeStamp());
+    } else {
+      boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
+      boundStatement.setDefaultTimestamp(record.timestamp());
+    }
     return boundStatement;
   }
 }

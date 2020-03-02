@@ -4,9 +4,11 @@ import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Statement;
+import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Schema;
+import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.io.Closeable;
 import java.util.Map;
@@ -44,10 +46,11 @@ public interface ScyllaDbSession extends Closeable {
     /**
      * Ensure that a table has a specified schema.
      * @param tableName name of the table
-     * @param keySchema schema that will be used for the primary key.
-     * @param valueSchema schema that will be used for the rest of the table.
+     * @param sinkRecord which will have keySchema that will be used for the primary key and
+     * valueSchema that will be used for the rest of the table.
+     * @param topicConfigs class containing mapping details for the record
      */
-    void createOrAlterTable(String tableName, Schema keySchema, Schema valueSchema);
+    void createOrAlterTable(String tableName, SinkRecord sinkRecord, TopicConfigs topicConfigs);
 
     /**
      * Flag to determine if the session is valid.
@@ -69,9 +72,10 @@ public interface ScyllaDbSession extends Closeable {
     /**
      * Method will return a RecordToBoundStatementConverter for an insert the supplied table.
      * @param tableName table to return the RecordToBoundStatementConverter for
+     * @param topicConfigs class containing mapping details for the record
      * @return RecordToBoundStatementConverter that can be used for the record.
      */
-    RecordToBoundStatementConverter insert(String tableName);
+    RecordToBoundStatementConverter insert(String tableName, TopicConfigs topicConfigs);
 
     /**
      * Method is used to add prepared statements for the offsets that are in the current batch.
