@@ -22,6 +22,8 @@ import com.google.common.collect.Iterables;
 import io.connect.scylladb.utils.VersionUtil;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
@@ -38,12 +40,13 @@ public class ScyllaDbSinkTask extends SinkTask {
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkTask.class);
 
   private ScyllaDbSinkConnectorConfig config;
+  private Map<TopicPartition, OffsetAndMetadata> topicOffsets;
   ScyllaDbSession session;
 
   /**
    * Starts the sink task. 
    * If <code>scylladb.offset.storage.table.enable</code> is set to true, 
-   * the task will load offsets for each Kafka topic-parition from 
+   * the task will load offsets for each Kafka topic-partition from
    * ScyllaDB offset table into task context.
    */
   @Override
@@ -56,6 +59,7 @@ public class ScyllaDbSinkTask extends SinkTask {
       if (!offsets.isEmpty()) {
         context.offset(offsets);
       }
+      topicOffsets = new HashMap<>();
     }
   }
 
@@ -99,49 +103,56 @@ public class ScyllaDbSinkTask extends SinkTask {
 
     int configuredMaxBatchSize = config.maxBatchSizeKb * 1024;
     for (SinkRecord record : records) {
-      ScyllaDbSinkTaskHelper scyllaDbSinkTaskHelper = new ScyllaDbSinkTaskHelper(config, getValidSession());
-      scyllaDbSinkTaskHelper.validateRecord(record);
+      try {
+        ScyllaDbSinkTaskHelper scyllaDbSinkTaskHelper = new ScyllaDbSinkTaskHelper(config, getValidSession());
+        scyllaDbSinkTaskHelper.validateRecord(record);
 
-      final String topicName = record.topic();
-      final int partition = record.kafkaPartition();
+        final String topicName = record.topic();
+        final int partition = record.kafkaPartition();
 
-      BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
-      log.trace("put() - Adding Bound Statement {} for {}:{}:{}",
-              boundStatement.preparedStatement().getQueryString(),
-              record.topic(),
-              record.kafkaPartition(),
-              record.kafkaOffset()
-      );
-      List<BatchStatement> batchStatementList =
-              batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition))
-                      ? batchesPerTopicPartition.get(new TopicPartition(topicName, partition))
-                      : new ArrayList<>();
+        BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
+        log.trace("put() - Adding Bound Statement {} for {}:{}:{}",
+                boundStatement.preparedStatement().getQueryString(),
+                record.topic(),
+                record.kafkaPartition(),
+                record.kafkaOffset()
+        );
+        List<BatchStatement> batchStatementList =
+                batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition))
+                        ? batchesPerTopicPartition.get(new TopicPartition(topicName, partition))
+                        : new ArrayList<>();
 
-      BatchStatement latestBatchStatement =
-              batchStatementList.size() > 0
-                      ? batchStatementList.get(batchStatementList.size() - 1)
-                      : new BatchStatement(BatchStatement.Type.UNLOGGED);
+        BatchStatement latestBatchStatement =
+                batchStatementList.size() > 0
+                        ? batchStatementList.get(batchStatementList.size() - 1)
+                        : new BatchStatement(BatchStatement.Type.UNLOGGED);
 
-      int totalBatchSize = (latestBatchStatement.size() > 0
-              ? statementSize(latestBatchStatement)
-              : 0)
-              + statementSize(boundStatement);
+        int totalBatchSize = (latestBatchStatement.size() > 0
+                ? statementSize(latestBatchStatement)
+                : 0)
+                + statementSize(boundStatement);
 
-      boolean shouldWriteStatementInCurrentBatch = latestBatchStatement.size() > 0
-              && isRecordWithinTimestampResolution(boundStatement, latestBatchStatement);
+        boolean shouldWriteStatementInCurrentBatch = latestBatchStatement.size() > 0
+                && isRecordWithinTimestampResolution(boundStatement, latestBatchStatement);
 
-      if (totalBatchSize <= configuredMaxBatchSize && shouldWriteStatementInCurrentBatch) {
-        latestBatchStatement.add(boundStatement);
-        latestBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
-      } else {
-        BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
-        newBatchStatement.add(boundStatement);
-        newBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
-        batchStatementList.add(newBatchStatement);
+        if (totalBatchSize <= configuredMaxBatchSize && shouldWriteStatementInCurrentBatch) {
+          latestBatchStatement.add(boundStatement);
+          latestBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
+        } else {
+          BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
+          newBatchStatement.add(boundStatement);
+          newBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
+          batchStatementList.add(newBatchStatement);
+        }
+        batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
+        // Commit offset in the case of successful processing of sink record
+        topicOffsets.put(new TopicPartition(record.topic(), record.kafkaPartition()),
+                new OffsetAndMetadata(record.kafkaOffset() + 1));
+      } catch (DataException | NullPointerException ex) {
+        handleErrors(record, ex);
       }
-      batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
     }
-    
+
     for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {
       for (BatchStatement batchStatement : batchStatementList) {
         ConsistencyLevel consistencyLevel = config.consistencyLevel;
@@ -205,7 +216,7 @@ public class ScyllaDbSinkTask extends SinkTask {
   ) {
     if (config.isOffsetEnabledInScyllaDb()) {
       BatchStatement batch = new BatchStatement();
-      this.getValidSession().addOffsetsToBatch(batch, currentOffsets);
+      this.getValidSession().addOffsetsToBatch(batch, topicOffsets);
 
       try {
         log.debug("flush() - Flushing offsets to {}", this.config.offsetStorageTable);
@@ -220,7 +231,33 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
-    return super.preCommit(currentOffsets);
+    if (!topicOffsets.isEmpty()) {
+      return topicOffsets;
+    } else {
+      /*
+       * In case when @put is empty, returning the same offsets
+       */
+      return currentOffsets;
+    }
+  }
+
+  /**
+   * handle error based on configured behavior on error.
+   */
+  private void handleErrors(SinkRecord record, Exception ex) {
+    if (config.behaviourOnError == ScyllaDbSinkConnectorConfig.BehaviorOnError.FAIL) {
+      throw new ConnectException("Exception occurred while "
+              + "extracting records from Kafka Sink Records.", ex);
+    } else if (config.behaviourOnError == ScyllaDbSinkConnectorConfig.BehaviorOnError.LOG) {
+      log.warn("Exception occurred while extracting records from Kafka Sink Records, "
+              + "ignoring and processing next set of records.", ex);
+    } else {
+      log.trace("Exception occurred while extracting records from Kafka Sink Records, "
+              + "ignoring and processing next set of records.", ex);
+    }
+    // Commit offset in the case when BehaviorOnError is not FAIL.
+    topicOffsets.put(new TopicPartition(record.topic(), record.kafkaPartition()),
+            new OffsetAndMetadata(record.kafkaOffset() + 1));
   }
 
   /**

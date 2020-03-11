@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final TableOptions.CompressionOptions tableCompressionAlgorithm;
   public final char[] trustStorePassword;
   public final File trustStorePath;
+  public final char[] keyStorePassword;
+  public final File keyStorePath;
   public final String offsetStorageTable;
   public final long statementTimeoutMs;
   public final int maxBatchSizeKb;
@@ -54,10 +57,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final long timestampResolutionMs;
   public final Map<String, TopicConfigs> topicWiseConfigs;
   public final Integer ttl;
+  public final BehaviorOnError behaviourOnError;
+  public final List<String> cipherSuites;
+  public final File certFilePath;
+  public final File privateKeyPath;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
-
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
       ImmutableMap.of(
@@ -95,6 +101,18 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.trustStorePassword =
             this.getPassword(SSL_TRUSTSTORE_PASSWORD_CONFIG).value().toCharArray();
 
+    final String keyStorePath = this.getString(SSL_KEYSTORE_PATH_CONFIG);
+    this.keyStorePath = Strings.isNullOrEmpty(keyStorePath) ? null : new File(keyStorePath);
+    this.keyStorePassword =
+            this.getPassword(SSL_KEYSTORE_PASSWORD_CONFIG).value().toCharArray();
+
+    this.cipherSuites = getList(SSL_CIPHER_SUITES_CONFIG);
+
+    final String certFilePath = this.getString(SSL_OPENSLL_KEYCERTCHAIN_CONFIG);
+    this.certFilePath = Strings.isNullOrEmpty(certFilePath) ? null : new File(certFilePath);
+    final String privateKeyPath = this.getString(SSL_OPENSLL_PRIVATEKEY_CONFIG);
+    this.privateKeyPath = Strings.isNullOrEmpty(privateKeyPath) ? null : new File(privateKeyPath);
+
     final String compression = getString(COMPRESSION_CONFIG);
     this.compression = CLIENT_COMPRESSION.get(compression);
     this.sslProvider = ConfigUtils.getEnum(SslProvider.class, this, SSL_PROVIDER_CONFIG);
@@ -127,6 +145,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.maxBatchSizeKb = getInt(MAX_BATCH_SIZE_CONFIG);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.timestampResolutionMs = getLong(TIMESTAMP_RESOLUTION_MS_CONF);
+    this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
+
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
     for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
       final String name2 = entry.getKey();
@@ -236,6 +256,22 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String SSL_TRUSTSTORE_PASSWORD_CONFIG = "scylladb.ssl.truststore.password";
   private static final String SSL_TRUSTSTORE_PASSWORD_DOC = "Password to open the Java Truststore with.";
 
+  public static final String SSL_KEYSTORE_PATH_CONFIG = "scylladb.ssl.keystore.path";
+  private static final String SSL_KEYSTORE_PATH_DOC = "Path to the Java Keystore";
+
+  public static final String SSL_KEYSTORE_PASSWORD_CONFIG = "scylladb.ssl.keystore.password";
+  private static final String SSL_KEYSTORE_PASSWORD_DOC = "Password to open the Java Keystore with.";
+
+  public static final String SSL_CIPHER_SUITES_CONFIG = "scylladb.ssl.cipherSuites";
+  private static final String SSL_CIPHER_SUITES_DOC = "The cipher suites to enable. "
+          + "Defaults to none, resulting in a ``minimal quality of service`` according to JDK documentation.";
+
+  public static final String SSL_OPENSLL_KEYCERTCHAIN_CONFIG = "scylladb.ssl.openssl.keyCertChain";
+  private static final String SSL_OPENSLL_KEYCERTCHAIN_DOC = "Path to the SSL certificate file, when using OpenSSL.";
+
+  public static final String SSL_OPENSLL_PRIVATEKEY_CONFIG = "ssl.openssl.privateKey";
+  private static final String SSL_OPENSLL_PRIVATEKEY_DOC = "Path to the private key file, when using OpenSSL.";
+
   public static final String TTL_CONFIG = "scylladb.ttl";
   /*If TTL value is not specified then skip setting ttl value while making insert query*/
   public static final String TTL_DEFAULT = null;
@@ -263,6 +299,23 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "local to the machine on which the connector is running. It is a recommended config if "
           + "we have more than one DC.";
 
+  public static final String BEHAVIOR_ON_ERROR_CONFIG = "behavior.on.error";
+  public static final String BEHAVIOR_ON_ERROR_DEFAULT = BehaviorOnError.FAIL.name();
+  private static final String BEHAVIOR_ON_ERROR_DISPLAY = "Behavior On Error";
+  private static final String BEHAVIOR_ON_ERROR_DOC = "Error handling behavior setting. "
+          + "Must be configured to one of the following:\n"
+          + "``fail``\n"
+          + "The Connector throws ConnectException and stops processing records "
+          + "when an error occurs while processing or inserting records into ScyllDB.\n"
+          + "``ignore``\n"
+          + "Continues to process next set of records "
+          + "when error occurs while processing or inserting records into ScyllDB.\n"
+          + "``log``\n"
+          + "Logs the error via connect-reporter when an error occurs while processing or "
+          + "inserting records into ScyllDB and continues to process next set of records, "
+          + "available in the kafka topics.";
+
+  public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
   public static final String SSL_GROUP = "SSL";
   public static final String KEYSPACE_GROUP = "Keyspace";
@@ -389,6 +442,56 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     "SSL Truststore Password")
             //TODO .validator(Validators.blankOr(ValidFile.of()))
             //TODO .recommender(Recommenders.visibleIf(SSL_ENABLED_CONFIG, true))
+            .define(
+                    SSL_KEYSTORE_PATH_CONFIG,
+                    ConfigDef.Type.STRING,
+                    "",
+                    ConfigDef.Importance.MEDIUM,
+                    SSL_KEYSTORE_PATH_DOC,
+                    SSL_GROUP,
+                    2,
+                    ConfigDef.Width.SHORT,
+                    "SSL Keystore Path")
+            .define(
+                    SSL_KEYSTORE_PASSWORD_CONFIG,
+                    ConfigDef.Type.PASSWORD,
+                    "password123",
+                    ConfigDef.Importance.MEDIUM,
+                    SSL_KEYSTORE_PASSWORD_DOC,
+                    SSL_GROUP,
+                    3,
+                    ConfigDef.Width.SHORT,
+                    "SSL Keystore Password")
+            .define(
+                    SSL_CIPHER_SUITES_CONFIG,
+                    ConfigDef.Type.LIST,
+                    (Object) Collections.EMPTY_LIST,
+                    ConfigDef.Importance.HIGH,
+                    SSL_CIPHER_SUITES_DOC,
+                    SSL_GROUP,
+                    4,
+                    ConfigDef.Width.LONG,
+                    "The cipher suites to enable")
+            .define(
+                    SSL_OPENSLL_KEYCERTCHAIN_CONFIG,
+                    ConfigDef.Type.STRING,
+                    "",
+                    ConfigDef.Importance.HIGH,
+                    SSL_OPENSLL_KEYCERTCHAIN_DOC,
+                    SSL_GROUP,
+                    5,
+                    ConfigDef.Width.SHORT,
+                    "The path to the certificate chain file")
+            .define(
+                    SSL_OPENSLL_PRIVATEKEY_CONFIG,
+                    ConfigDef.Type.STRING,
+                    "",
+                    ConfigDef.Importance.HIGH,
+                    SSL_OPENSLL_PRIVATEKEY_DOC,
+                    SSL_GROUP,
+                    6,
+                    ConfigDef.Width.SHORT,
+                    "The path to the private key file")
             .define(
                     CONSISTENCY_LEVEL_CONFIG,
                     ConfigDef.Type.STRING,
@@ -524,7 +627,21 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     6,
                     ConfigDef.Width.SHORT,
-                    "Timestamp Threshold in MS");
+                    "Timestamp Threshold in MS")
+            .define(
+                    BEHAVIOR_ON_ERROR_CONFIG,
+                    ConfigDef.Type.STRING,
+                    BEHAVIOR_ON_ERROR_DEFAULT,
+                    ConfigDef.ValidString.in(BehaviorOnError.FAIL.name(),
+                            BehaviorOnError.LOG.name(), BehaviorOnError.IGNORE.name()),
+                    ConfigDef.Importance.MEDIUM,
+                    BEHAVIOR_ON_ERROR_DOC,
+                    SCYLLADB_GROUP,
+                    0,
+                    ConfigDef.Width.NONE,
+                    BEHAVIOR_ON_ERROR_DISPLAY
+                    //Recommenders.enumValues(BehaviorOnError.class)
+            );
   }
 
   private String tryMatchTopicName(final String name) {
@@ -533,6 +650,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       return m.group(1);
     }
     throw new IllegalArgumentException("The setting: " + name + " does not match topic.keyspace.table nor topic.codec regular expression pattern");
+  }
+
+  /**
+   * Enums for behavior on error.
+   */
+  public enum BehaviorOnError {
+    IGNORE,
+    LOG,
+    FAIL
   }
 
   public boolean isOffsetEnabledInScyllaDb() {

@@ -124,7 +124,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
           dataType = DataType.varchar();
           break;
         default:
-          throw new UnsupportedOperationException(
+          throw new DataException(
               String.format("Unsupported type %s", schema.type())
           );
       }
