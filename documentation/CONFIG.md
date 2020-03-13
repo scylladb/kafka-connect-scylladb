@@ -19,7 +19,8 @@ Connector-specific configuration properties are described below.
   it will contact second one and get the state of the cluster from it.
   Eg. When using the docker image, connect to the host it uses. 
   To connect to private Scylla nodes, provide a JSON string having all internal private network address:port mapped to
-  an external network address:port as key value pairs. 
+  an external network address:port as key value pairs. Need to pass it as 
+  {\"private_host1:port1\",\"public_host1:port1\",\"private_host2:port2\",\"public_host2:port2\", ...}
   Eg. {\"10.0.24.69:9042\": \"sl-eu-lon-2-portal.3.dblayer.com:15227\", \"10.0.24.71:9042\": \"sl-eu-lon-2-portal.2.dblayer.com:15229\", \"10.0.24.70:9042\": \"sl-eu-lon-2-portal.1.dblayer.com:15228\"}
   
   * Type: List
