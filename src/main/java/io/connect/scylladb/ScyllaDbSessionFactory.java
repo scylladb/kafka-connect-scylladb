@@ -151,7 +151,7 @@ public class ScyllaDbSessionFactory {
   private void configureAddressTranslator(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) {
     log.info("Trying to configure address translator for private network address and port.");
     new JSONObject(config.contactPoints);
-    ComposeAddressTranslator translator = new ComposeAddressTranslator();
+    ClusterAddressTranslator translator = new ClusterAddressTranslator();
     translator.setMap(config.contactPoints);
     clusterBuilder.addContactPointsWithPorts(translator.getContactPoints())
             .withAddressTranslator(translator);

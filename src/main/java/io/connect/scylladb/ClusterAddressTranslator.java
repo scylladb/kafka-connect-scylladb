@@ -9,7 +9,7 @@ import java.util.Iterator;
 import java.util.Map;
 import org.json.*;
 
-class ComposeAddressTranslator implements AddressTranslator {
+class ClusterAddressTranslator implements AddressTranslator {
 
     public Map<InetSocketAddress, InetSocketAddress> addressMap = new HashMap<>();
 
