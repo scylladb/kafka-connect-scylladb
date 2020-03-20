@@ -405,7 +405,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     CONNECTION_GROUP,
                     6,
                     ConfigDef.Width.SHORT,
-                    CONNECTION_GROUP)
+                    "SSL Enabled?")
             .define(
                     SSL_PROVIDER_CONFIG,
                     ConfigDef.Type.STRING,
@@ -585,7 +585,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     2,
                     ConfigDef.Width.SHORT,
-                    "Execute statement timeout")
+                    "Execute statement timeout (in ms)")
             .define(
                     TTL_CONFIG,
                     ConfigDef.Type.STRING,
@@ -595,7 +595,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     3,
                     ConfigDef.Width.SHORT,
-                    "Time to live IN Seconds")
+                    "Time to live (in seconds)")
             .define(
                     ENABLE_OFFSET_STORAGE_TABLE,
                     ConfigDef.Type.BOOLEAN,
@@ -616,7 +616,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     5,
                     ConfigDef.Width.LONG,
-                    "Max Batch Size in KB")
+                    "Max Batch Size (in kb)")
             .define(
                     TIMESTAMP_RESOLUTION_MS_CONF,
                     ConfigDef.Type.LONG,
@@ -627,7 +627,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     6,
                     ConfigDef.Width.SHORT,
-                    "Timestamp Threshold in MS")
+                    "Timestamp Threshold (in ms)")
             .define(
                     BEHAVIOR_ON_ERROR_CONFIG,
                     ConfigDef.Type.STRING,
