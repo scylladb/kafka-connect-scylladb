@@ -12,6 +12,8 @@ import io.connect.scylladb.codec.StringUuidCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.apache.kafka.connect.errors.ConnectException;
+import org.json.JSONObject;
+import org.json.JSONException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,10 +45,18 @@ public class ScyllaDbSessionFactory {
 
   public ScyllaDbSession newSession(ScyllaDbSinkConnectorConfig config) {
     Cluster.Builder clusterBuilder = Cluster.builder()
-        .withPort(config.port)
-        .addContactPoints(config.contactPoints)
         .withProtocolVersion(ProtocolVersion.NEWEST_SUPPORTED)
         .withCodecRegistry(CODEC_REGISTRY);
+
+    try {
+      configureAddressTranslator(config, clusterBuilder);
+    } catch (JSONException e) {
+      log.info("Failed to configure address translator, provide a valid JSON string " +
+              "with external network address and port mapped to private network " +
+              "address and port.");
+      configurePublicContactPoints(config, clusterBuilder);
+    }
+
     if (!config.loadBalancingLocalDc.isEmpty()) {
       clusterBuilder.withLoadBalancingPolicy(
               DCAwareRoundRobinPolicy.builder()
@@ -129,6 +139,22 @@ public class ScyllaDbSessionFactory {
     log.info("Creating session");
     final Session session = cluster.newSession();
     return new ScyllaDbSessionImpl(config, cluster, session);
+  }
+
+  private void configurePublicContactPoints(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) {
+    log.info("Configuring public contact points={}", config.contactPoints);
+    String[] contactPointsArray = config.contactPoints.split(",");
+    clusterBuilder.withPort(config.port)
+            .addContactPoints(contactPointsArray);
+  }
+
+  private void configureAddressTranslator(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) {
+    log.info("Trying to configure address translator for private network address and port.");
+    new JSONObject(config.contactPoints);
+    ClusterAddressTranslator translator = new ClusterAddressTranslator();
+    translator.setMap(config.contactPoints);
+    clusterBuilder.addContactPointsWithPorts(translator.getContactPoints())
+            .withAddressTranslator(translator);
   }
 
   private KeyStore createKeyStore(File path, char[] password) {

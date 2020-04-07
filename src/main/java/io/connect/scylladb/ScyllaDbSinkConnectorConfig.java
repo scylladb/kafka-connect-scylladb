@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
 
@@ -17,12 +16,12 @@ import com.datastax.driver.core.ProtocolOptions;
 import com.datastax.driver.core.schemabuilder.SchemaBuilder;
 import com.datastax.driver.core.schemabuilder.TableOptions;
 import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 import io.confluent.kafka.connect.utils.config.ConfigUtils;
 import io.confluent.kafka.connect.utils.config.ValidEnum;
 import io.confluent.kafka.connect.utils.config.ValidPort;
+import io.connect.scylladb.topictotable.TopicConfigs;
 import io.netty.handler.ssl.SslProvider;
 
 /**
@@ -31,7 +30,7 @@ import io.netty.handler.ssl.SslProvider;
 public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public final int port;
-  public final String[] contactPoints;
+  public final String contactPoints;
   public final ConsistencyLevel consistencyLevel;
   public final boolean securityEnabled;
   public final String username;
@@ -65,14 +64,14 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
 
-  static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION = 
+  static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION =
       ImmutableMap.of(
           "NONE", ProtocolOptions.Compression.NONE,
           "SNAPPY", ProtocolOptions.Compression.SNAPPY,
           "LZ4", ProtocolOptions.Compression.LZ4
       );
 
-  static final Map<String, TableOptions.CompressionOptions.Algorithm> TABLE_COMPRESSION = 
+  static final Map<String, TableOptions.CompressionOptions.Algorithm> TABLE_COMPRESSION =
       ImmutableMap.of(
           "NONE", TableOptions.CompressionOptions.Algorithm.NONE,
           "SNAPPY", TableOptions.CompressionOptions.Algorithm.SNAPPY,
@@ -83,8 +82,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public ScyllaDbSinkConnectorConfig(Map<?, ?> originals) {
     super(config(), originals);
     this.port = getInt(PORT_CONFIG);
-    final List<String> contactPoints = this.getList(CONTACT_POINTS_CONFIG);
-    this.contactPoints = contactPoints.toArray(new String[contactPoints.size()]);
+    this.contactPoints = getString(CONTACT_POINTS_CONFIG);
     this.consistencyLevel =
             ConfigUtils.getEnum(ConsistencyLevel.class, this, CONSISTENCY_LEVEL_CONFIG);
     this.username = getString(USERNAME_CONFIG);
@@ -168,27 +166,34 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Eg. When using a docker image, connect to the port it uses(use docker ps)";
 
   public static final String CONTACT_POINTS_CONFIG = "scylladb.contact.points";
-  static final String CONTACT_POINTS_DOC = "The Scylladb hosts to connect to. " +
-          "Scylla nodes use this list of hosts to find each other and learn " +
-          "the topology of the ring. You must change this if you are running " +
-          "multiple nodes. It's essential to put at least 2 hosts in case of " +
-          "bigger cluster, since if first host is down, it will contact second " +
-          "one and get the state of the cluster from it. Eg. When using the docker " +
-          "image, connect to the host it uses.";
+  static final String CONTACT_POINTS_DOC = "The Scylladb hosts to connect to. "
+          + "Scylla nodes use this list of hosts to find each other and learn "
+          + "the topology of the ring. You must change this if you are running "
+          + "multiple nodes. It's essential to put at least 2 hosts in case of "
+          + "bigger cluster, since if first host is down, it will contact second "
+          + "one and get the state of the cluster from it. Eg. When using the docker "
+          + "image, connect to the host it uses. To connect to private Scylla nodes, "
+          + "provide a JSON string having all internal private network address:port "
+          + "mapped to an external network address:port as key value pairs. "
+          + "Need to pass it as {\"private_host1:port1\",\"public_host1:port1\", "
+          + "\"private_host2:port2\",\"public_host2:port2\", ...}"
+          + "Eg. {\"10.0.24.69:9042\": \"sl-eu-lon-2-portal.3.dblayer.com:15227\", "
+          + "\"10.0.24.71:9042\": \"sl-eu-lon-2-portal.2.dblayer.com:15229\", "
+          + "\"10.0.24.70:9042\": \"sl-eu-lon-2-portal.1.dblayer.com:15228\"}";
 
   public static final String CONSISTENCY_LEVEL_CONFIG = "scylladb.consistency.level";
-  private static final String CONSISTENCY_LEVEL_DOC =
-          "The requested consistency level to use when writing to Scylladb. " +
-          "The Consistency Level (CL) determines how many replicas in a cluster " +
-          "that must acknowledge read or write operations before it is considered successful.";
+  private static final String CONSISTENCY_LEVEL_DOC = "The requested consistency level "
+          + "to use when writing to ScyllaDB. The Consistency Level (CL) determines how "
+          + "many replicas in a cluster that must acknowledge read or write operations "
+          + "before it is considered successful. Valid values are ANY, ONE, TWO, THREE, "
+          + "QUORUM, ALL, LOCAL_QUORUM, EACH_QUORUM, SERIAL, LOCAL_SERIAL, LOCAL_ONE.";
 
   public static final String SSL_ENABLED_CONFIG = "scylladb.ssl.enabled";
-  private static final String SSL_ENABLED_DOC =
-          "Flag to determine if SSL is enabled when connecting to Scylladb.";
+  private static final String SSL_ENABLED_DOC = "Flag to determine if SSL is enabled when connecting to Scylladb.";
 
   public static final String SSL_PROVIDER_CONFIG = "scylladb.ssl.provider";
-  private static final String SSL_PROVIDER_DOC =
-          "The SSL Provider to use when connecting to Scylladb.";
+  private static final String SSL_PROVIDER_DOC = "The SSL Provider to use when connecting to ScyllaDB. "
+          + "Valid Values are JDK, OPENSSL, OPENSSL_REFCNT.";
 
   public static final String SECURITY_ENABLE_CONFIG = "scylladb.security.enabled";
   static final String SECURITY_ENABLE_DOC = "To enable security while loading "
@@ -211,29 +216,25 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "This keyspace is like a database in the ScyllaDB cluster.";
 
   public static final String KEYSPACE_CREATE_ENABLED_CONFIG = "scylladb.keyspace.create.enabled";
-  private static final String KEYSPACE_CREATE_ENABLED_DOC =
-          "Flag to determine if the keyspace should be created if it does not exist. "
-          + "**Note**: Error if a new keyspace has to be created and the config is false.";
+  private static final String KEYSPACE_CREATE_ENABLED_DOC = "Flag to determine if the keyspace "
+          + "should be created if it does not exist. **Note**: Error if a new keyspace has to "
+          + "be created and the config is false.";
 
-  public static final String KEYSPACE_REPLICATION_FACTOR_CONFIG =
-          "scylladb.keyspace.replication.factor";
-  private static final String KEYSPACE_REPLICATION_FACTOR_DOC =
-          "The replication factor to use if a keyspace is created by the connector. " +
-          "The Replication Factor (RF) is equivalent to the number of nodes where data " +
-          "(rows and partitions) are replicated. Data is replicated to multiple (RF=N) nodes";
+  public static final String KEYSPACE_REPLICATION_FACTOR_CONFIG = "scylladb.keyspace.replication.factor";
+  private static final String KEYSPACE_REPLICATION_FACTOR_DOC = "The replication factor to use "
+          + "if a keyspace is created by the connector. The Replication Factor (RF) is equivalent "
+          + "to the number of nodes where data (rows and partitions) are replicated. Data is replicated to multiple (RF=N) nodes";
 
   public static final String COMPRESSION_CONFIG = "scylladb.compression";
-  private static final String COMPRESSION_DOC =
-          "Compression algorithm to use when connecting to Scylladb.";
+  private static final String COMPRESSION_DOC = "Compression algorithm to use when connecting to ScyllaDB. "
+          + "Valid Values are NONE, SNAPPY, LZ4.";
 
   public static final String TABLE_MANAGE_ENABLED_CONFIG = "scylladb.table.manage.enabled";
-  private static final String SCHEMA_MANAGE_CREATE_DOC =
-          "Flag to determine if the connector should manage the table.";
+  private static final String SCHEMA_MANAGE_CREATE_DOC = "Flag to determine if the connector should manage the table.";
 
-  public static final String TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG =
-          "scylladb.table.create.compression.algorithm";
-  private static final String TABLE_CREATE_COMPRESSION_ALGORITHM_DOC =
-          "Compression algorithm to use when the table is created.";
+  public static final String TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG = "scylladb.table.create.compression.algorithm";
+  private static final String TABLE_CREATE_COMPRESSION_ALGORITHM_DOC = "Compression algorithm to use when the table is created. "
+          + "Valid Values are NONE, SNAPPY, LZ4, DEFLATE.";
 
   public static final String OFFSET_STORAGE_TABLE_CONF = "scylladb.offset.storage.table";
   private static final String OFFSET_STORAGE_TABLE_DOC = "The table within the Scylladb keyspace "
@@ -242,10 +243,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String ENABLE_OFFSET_STORAGE_TABLE = "scylladb.offset.storage.table.enable";
   private static final Boolean ENABLE_OFFSET_STORAGE_TABLE_DEFAULT = true;
-  private static final String ENABLE_OFFSET_STORAGE_TABLE_DOC =
-          "If true, Kafka consumer offsets will be stored in Scylladb table. If false, connector will "
-                  + "skip writing offset information into Scylladb (this might imply duplicate writes "
-                  + "into Scylladb when a task restarts).";
+  private static final String ENABLE_OFFSET_STORAGE_TABLE_DOC = "If true, Kafka consumer offsets will "
+          + "be stored in Scylladb table. If false, connector will skip writing offset information into "
+          + "Scylladb (this might imply duplicate writes into Scylladb when a task restarts).";
 
   public static final String EXECUTE_STATEMENT_TIMEOUT_MS_CONF = "scylladb.execute.timeout.ms";
   private static final String EXECUTE_STATEMENT_TIMEOUT_MS_DOC = "The timeout for executing a ScyllaDB statement.";
@@ -321,13 +321,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String KEYSPACE_GROUP = "Keyspace";
   public static final String TABLE_GROUP = "Table";
   public static final String WRITE_GROUP = "Write";
-  
+
   public static ConfigDef config() {
     return new ConfigDef()
             .define(
                     CONTACT_POINTS_CONFIG,
-                    ConfigDef.Type.LIST,
-                    ImmutableList.of("localhost"),
+                    ConfigDef.Type.STRING,
+                    "localhost",
                     ConfigDef.Importance.HIGH,
                     CONTACT_POINTS_DOC,
                     CONNECTION_GROUP,
@@ -358,7 +358,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             .define(
                     SECURITY_ENABLE_CONFIG,
                     ConfigDef.Type.BOOLEAN,
-                    true,
+                    false,
                     ConfigDef.Importance.HIGH,
                     SECURITY_ENABLE_DOC,
                     CONNECTION_GROUP,
@@ -405,7 +405,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     CONNECTION_GROUP,
                     6,
                     ConfigDef.Width.SHORT,
-                    CONNECTION_GROUP)
+                    "SSL Enabled?")
             .define(
                     SSL_PROVIDER_CONFIG,
                     ConfigDef.Type.STRING,
@@ -414,7 +414,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.LOW,
                     SSL_PROVIDER_DOC,
                     SSL_GROUP,
-                    2,
+                    0,
                     ConfigDef.Width.SHORT,
                     "SSL Provider")
             //TODO recommender(Recommenders.visibleIf(SSL_ENABLED_CONFIG, true))
@@ -425,7 +425,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.MEDIUM,
                     SSL_TRUSTSTORE_PATH_DOC,
                     SSL_GROUP,
-                    0,
+                    1,
                     ConfigDef.Width.SHORT,
                     "SSL Truststore Path")
             //TODO .validator(Validators.blankOr(ValidFile.of()))
@@ -437,7 +437,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.MEDIUM,
                     SSL_TRUSTSTORE_PASSWORD_DOC,
                     SSL_GROUP,
-                    1,
+                    2,
                     ConfigDef.Width.SHORT,
                     "SSL Truststore Password")
             //TODO .validator(Validators.blankOr(ValidFile.of()))
@@ -449,7 +449,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.MEDIUM,
                     SSL_KEYSTORE_PATH_DOC,
                     SSL_GROUP,
-                    2,
+                    3,
                     ConfigDef.Width.SHORT,
                     "SSL Keystore Path")
             .define(
@@ -459,7 +459,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.MEDIUM,
                     SSL_KEYSTORE_PASSWORD_DOC,
                     SSL_GROUP,
-                    3,
+                    4,
                     ConfigDef.Width.SHORT,
                     "SSL Keystore Password")
             .define(
@@ -469,7 +469,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.HIGH,
                     SSL_CIPHER_SUITES_DOC,
                     SSL_GROUP,
-                    4,
+                    5,
                     ConfigDef.Width.LONG,
                     "The cipher suites to enable")
             .define(
@@ -479,7 +479,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.HIGH,
                     SSL_OPENSLL_KEYCERTCHAIN_DOC,
                     SSL_GROUP,
-                    5,
+                    6,
                     ConfigDef.Width.SHORT,
                     "The path to the certificate chain file")
             .define(
@@ -489,7 +489,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Importance.HIGH,
                     SSL_OPENSLL_PRIVATEKEY_DOC,
                     SSL_GROUP,
-                    6,
+                    7,
                     ConfigDef.Width.SHORT,
                     "The path to the private key file")
             .define(
@@ -520,7 +520,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     KEYSPACE_GROUP,
                     0,
                     ConfigDef.Width.SHORT,
-                    "Cassandra Keyspace")
+                    "ScyllaDB Keyspace")
             .define(
                     KEYSPACE_CREATE_ENABLED_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -585,7 +585,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     2,
                     ConfigDef.Width.SHORT,
-                    "Execute statement timeout")
+                    "Execute statement timeout (in ms)")
             .define(
                     TTL_CONFIG,
                     ConfigDef.Type.STRING,
@@ -595,7 +595,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     3,
                     ConfigDef.Width.SHORT,
-                    "Time to live")
+                    "Time to live (in seconds)")
             .define(
                     ENABLE_OFFSET_STORAGE_TABLE,
                     ConfigDef.Type.BOOLEAN,
@@ -605,7 +605,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     4,
                     ConfigDef.Width.SHORT,
-                    "Enable offset stored in cassandra")
+                    "Enable offset stored in ScyllaDB")
             .define(
                     MAX_BATCH_SIZE_CONFIG,
                     ConfigDef.Type.INT,
@@ -616,7 +616,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     5,
                     ConfigDef.Width.LONG,
-                    "Max Batch Size in KB")
+                    "Max Batch Size (in kb)")
             .define(
                     TIMESTAMP_RESOLUTION_MS_CONF,
                     ConfigDef.Type.LONG,
@@ -627,7 +627,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     6,
                     ConfigDef.Width.SHORT,
-                    "Timestamp Threshold in MS")
+                    "Timestamp Threshold (in ms)")
             .define(
                     BEHAVIOR_ON_ERROR_CONFIG,
                     ConfigDef.Type.STRING,
