@@ -14,8 +14,8 @@ Command to start ScyllaDB docker container:
 $ docker run --name some-scylla --hostname some-scylla -d scylladb/scylla
 ```
 Running `docker ps` will show you the exposed ports, which should look something like the following:
-```
 
+```
 $ docker ps
 CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                                              NAMES
 26cc6d47efe3        replace-with-image-name   "/docker-entrypoint.…"   4 hours ago         Up 23 seconds       0.0.0.0:32777->1883/tcp, 0.0.0.0:32776->9001/tcp   anonymous_my_1
@@ -26,13 +26,13 @@ CONTAINER ID        IMAGE               COMMAND                  CREATED        
 If you are new to Confluent then follow this [link](https://www.confluent.io/download) to download the Confluent Platform .
 
 
-1 - Click on DOWNLOAD FREE under Self managed software.
+1. Click on DOWNLOAD FREE under Self managed software.
 
-2 - Click on Zip archive then fill the Email address then Accept the T&C and lastly click on Download Version 5.X.X.
+2. Click on Zip archive then fill the Email address then Accept the T&C and lastly click on Download Version 5.X.X.
 
-3 - Extract the downloaded file and paste it to the desired location.
+3. Extract the downloaded file and paste it to the desired location.
 
-4 - Now follow this [link](https://docs.confluent.io/current/quickstart/ce-quickstart.html#ce-quickstart) to complete the installation.
+4. Now follow this [link](https://docs.confluent.io/current/quickstart/ce-quickstart.html#ce-quickstart) to complete the installation.
 
 
 ### Manual Installation Of The Connector
@@ -87,11 +87,11 @@ Your output should resemble:
 "io.connect.scylladb.ScyllaDbSinkConnector"
 ```
 
-#####Connector Configuration
+#### Connector Configuration
 
 Save these configs in a file *kafka-connect-scylladb.json* and run the following command:
 
-```
+```json
 {
      "name" : "scylladb-sink-connector",
      "config" : {
@@ -100,11 +100,11 @@ Save these configs in a file *kafka-connect-scylladb.json* and run the following
        "topics" : "topic1,topic2,topic3",
        "scylladb.contact.points" : "scylladb-hosts",
        "scylladb.keyspace" : "test"
-       }
+     }
 }
 ```
 
-Use this command to load the connector :
+Use this command to load the connector:
 
 ```
 curl -s -X POST -H 'Content-Type: application/json' --data @kafka-connect-scylladb.json http://localhost:8083/connectors
@@ -121,21 +121,21 @@ Once the Connector is up and running, use the command ``kafka-avro-console-produ
 Example:
 
 ```
-kafka-avro-console-producer 
---broker-list localhost:9092 
---topic topic1  
---property parse.key=true 
---property key.schema='{"type":"record",name":"key_schema","fields":[{"name":"id","type":"int"}]}' 
---property "key.separator=$" 
---property value.schema='{"type":"record","name":"value_schema","fields":[{"name":"id","type":"int"},
-{"name":"firstName","type":"string"},{"name":"lastName","type":"string"}]}'
+kafka-avro-console-producer \
+  --broker-list localhost:9092 \
+  --topic topic1 \
+  --property parse.key=true \
+  --property key.schema='{"type":"record","name":"key_schema","fields":[{"name":"id","type":"int"}]}' \
+  --property "key.separator=$" \
+  --property value.schema='{"type":"record","name":"value_schema","fields":[{"name":"id","type":"int"},{"name":"firstName","type":"string"},{"name":"lastName","type":"string"}]}'
 {"id":1}${"id":1,"firstName":"first","lastName":"last"}
 ```
 
 Output upon running the select query in ScyllaDB:
-select * from test.topic1;
 
 ```
+select * from test.topic1;
+
  id | firstname | lastname
  
 ----+-----------+----------
@@ -144,9 +144,9 @@ select * from test.topic1;
   ```
 
 
-##Modes in ScyllaDB
+## Modes in ScyllaDB
 
-###Standard
+### Standard
 
 Use this command to load the connector in :
 
@@ -165,7 +165,7 @@ example.
 
 **Distributed Mode JSON**
 
-```
+```json
     {
      "name" : "scylladb-sink-connector",
      "config" : {
@@ -175,7 +175,7 @@ example.
        "scylladb.contact.points" : "scylladb-hosts",
        "scylladb.keyspace" : "test",
        "key.converter" : "org.apache.kafka.connect.json.JsonConverter",
-       "value.converter" : "org.apache.kafka.connect.json.JsonConverter"
+       "value.converter" : "org.apache.kafka.connect.json.JsonConverter",
        "key.converter.schemas.enable" : "true",
        "value.converter.schemas.enable" : "true",
            	 	 	
@@ -250,7 +250,7 @@ example.
 
 **Distributed Mode**
 
-```
+```json
 {
   "name" : "scylladbSinkConnector",
   "config" : {
@@ -281,7 +281,7 @@ scylladb.username=example
 scylladb.password=password
 ```
 
-###Logging
+### Logging
 
 To check logs for the Confluent Platform use:
 

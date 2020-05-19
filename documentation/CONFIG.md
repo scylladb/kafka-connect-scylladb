@@ -1,4 +1,4 @@
-#ScyllaDB Sink Connector
+# ScyllaDB Sink Connector
 
 Configuration Properties
 ------------------------
@@ -9,7 +9,7 @@ To use this connector, specify the name of the connector class in the ``connecto
 
 Connector-specific configuration properties are described below.
 
-###Connection
+### Connection
 
 ``scylladb.contact.points``
 
@@ -87,7 +87,7 @@ Connector-specific configuration properties are described below.
   * Default: false
   * Importance: high
   
-###SSL
+### SSL
 
 ``scylladb.ssl.truststore.path``
 
@@ -114,7 +114,7 @@ Connector-specific configuration properties are described below.
   * Valid Values: [JDK, OPENSSL, OPENSSL_REFCNT]
   * Importance: low
 
-###Keyspace
+### Keyspace
 
 **Note**: Both keyspace and table names consist of only alphanumeric characters, 
 cannot be empty and are limited in size to 48 characters (that limit exists 
@@ -149,7 +149,7 @@ can be forced by using double-quotes ("myTable" is different from mytable).
   * Valid Values: [1,...]
   * Importance: high
 
-###Table
+### Table
 
 ``scylladb.table.manage.enabled``
 
@@ -176,7 +176,7 @@ can be forced by using double-quotes ("myTable" is different from mytable).
   * Importance: Low
   * Default: kafka_connect_offsets
   
-###Topic to Table
+### Topic to Table
 
 These configurations can be specified for multiple Kafka topics from which records are being processed. 
 Also, these topic level configurations will be override the behavior of Connector level configurations such as 
@@ -209,7 +209,7 @@ Also, these topic level configurations will be override the behavior of Connecto
   should processed as delete request.
 
 
-###Write
+### Write
 
 ``scylladb.consistency.level``
 
@@ -256,28 +256,31 @@ Also, these topic level configurations will be override the behavior of Connecto
   * Importance: Medium
   * Default Value: True
   
-###ScyllaDB
+### ScyllaDB
 
 ``behavior.on.error``
 
-  Error handling behavior setting. Must be configured to one of the following:
+Error handling behavior setting. Must be configured to one of the following:
 
-  ``fail``
-  The Connector throws ConnectException and stops processing records when an error occurs while processing or inserting records into ScyllaDB.
+``fail``
 
-  ``ignore``
-  Continues to process next set of records when error occurs while processing or inserting records into ScyllaDB.
+The Connector throws ConnectException and stops processing records when an error occurs while processing or inserting records into ScyllaDB.
+
+``ignore``
+
+Continues to process next set of records when error occurs while processing or inserting records into ScyllaDB.
   
-  ``log``
-  Logs the error via connect-reporter when an error occurs while processing or inserting records into ScyllaDB and continues to process next set of records, available in the kafka topics.
+``log``
 
-  * Type: string
-  * Default: FAIL
-  * Valid Values: [FAIL, LOG, IGNORE]
-  * Importance: medium
+Logs the error via connect-reporter when an error occurs while processing or inserting records into ScyllaDB and continues to process next set of records, available in the kafka topics.
+
+* Type: string
+* Default: FAIL
+* Valid Values: [FAIL, LOG, IGNORE]
+* Importance: medium
 
 
-###Confluent Platform Configurations.
+### Confluent Platform Configurations.
 
 ``tasks.max``
 
@@ -301,7 +304,3 @@ The name of the topics to consume data from and write to ScyllaDB.
 * Type: list
 * Default: localhost:9092
 * Importance: high
-
-------------------------
-      
-
