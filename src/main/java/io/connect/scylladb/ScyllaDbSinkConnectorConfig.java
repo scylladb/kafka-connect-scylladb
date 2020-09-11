@@ -588,7 +588,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     "Execute statement timeout (in ms)")
             .define(
                     TTL_CONFIG,
-                    ConfigDef.Type.STRING,
+                    ConfigDef.Type.INT,
                     TTL_DEFAULT,
                     ConfigDef.Importance.MEDIUM,
                     TTL_DOC,
