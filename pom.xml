@@ -14,7 +14,7 @@
         <connection>scm:git:https://github.com/scylla/kafka-connect-scylladb.git</connection>
         <developerConnection>scm:git:git@github.com:scylla/kafka-connect-scylladb.git
         </developerConnection>
-        <url>https://github.com/scylla/kafka-connect-scylladb</url>
+        <url>https://github.com/scylladb/kafka-connect-scylladb</url>
         <tag>HEAD</tag>
     </scm>
 
