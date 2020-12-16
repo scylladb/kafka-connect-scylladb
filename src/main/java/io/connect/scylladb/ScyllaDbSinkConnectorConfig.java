@@ -58,6 +58,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final long statementTimeoutMs;
   public final String loadBalancingLocalDc;
   public final Map<String, TopicConfigs> topicWiseConfigs;
+  private final Map<String, String> topicToTable;
   public final Integer ttl;
   public final BehaviorOnError behaviourOnError;
   public final List<String> cipherSuites;
@@ -146,13 +147,24 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
 
+    // Mapping from topicName to a map with setting->value entries, where
+    // setting is e.g. "mapping" or "consistencylevel"
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
+    topicToTable = new HashMap<>();
     for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
       final String name2 = entry.getKey();
       if (name2.startsWith("topic.")) {
         final String topicName = this.tryMatchTopicName(name2);
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
-        topicMap.put(name2.split("\\.")[name2.split("\\.").length - 1], entry.getValue());
+        // Entries are on this form: 'topic.my_topic.my_ks.my_table.mapping'
+        // We completely ignore the "my_ks.my_table" part and just extract the final part of
+        // the string.
+        String settingName = name2.split("\\.")[name2.split("\\.").length - 1];
+        topicMap.put(settingName, entry.getValue());
+      } else if (name2.startsWith("topic2tablename.")) {
+        // Support for writing to a table name separate from the topic name.
+        final String topicName = name2.split("\\.")[1];
+        topicToTable.put(topicName, entry.getValue());
       }
     }
     topicWiseConfigs = new HashMap<>();
@@ -654,8 +666,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     return getBoolean(ENABLE_OFFSET_STORAGE_TABLE);
   }
 
+  public String getTableName(String topic) {
+    if(topicToTable.containsKey(topic)) {
+      return topicToTable.get(topic);
+    } else {
+      // Neither "." nor "-" are valid in Scylla table names
+      return topic.replace(".", "_").replace("-", "_");
+    }
+  }
+
   public static void main(String[] args) {
     System.out.println(config().toEnrichedRst());
   }
-
 }
+

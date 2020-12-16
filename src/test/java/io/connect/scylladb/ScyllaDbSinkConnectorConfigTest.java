@@ -41,5 +41,29 @@ public class ScyllaDbSinkConnectorConfigTest {
     new ScyllaDbSinkConnectorConfig(settings);
   }
 
+  @Test
+  public void testTableName() {
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertEquals("test", config.getTableName("test"));
+    assertEquals("topic_with_hyphen", config.getTableName("topic-with-hyphen"));
+    assertEquals("topic_with_dot", config.getTableName("topic.with.dot"));
+  }
+
+  @Test
+  public void testReplaceTableName() {
+    settings.put("topic2tablename.test-topic", "tablename");
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertEquals("test", config.getTableName("test"));
+    assertEquals("tablename", config.getTableName("test-topic"));
+  }
+
+  @Test
+  public void testTopicSettings() {
+    settings.put("topic.topic-name.keyspace.tablename.ttlSeconds", "3600");
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertEquals(Integer.valueOf(3600), config.topicWiseConfigs.get("topic-name").getTtl());
+
+  }
+
   //TODO: Add more tests
 }
