@@ -140,7 +140,9 @@ public class TopicConfigs {
   }
 
   public void setTtlAndTimeStampIfAvailable(SinkRecord record) {
-    this.timeStamp = record.timestamp();
+    // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
+    // while Scylla expects a microsecond precision: 1 ms = 1000 us.
+    this.timeStamp = record.timestamp() * 1000;
     if (timeStampMappedField != null) {
       Object timeStampValue = getValueOfField(record.value(), timeStampMappedField);
       if (timeStampValue instanceof Long) {
