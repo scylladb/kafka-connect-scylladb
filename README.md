@@ -8,7 +8,7 @@ Connector Installation
 
 Clone the connector from Github repository and refer this [link](./documentation/QUICKSTART.md) for quickstart.
 
-##Prerequisites
+## Prerequisites
 The following are required to run the ScyllaDB Sink Connector:
 * Kafka Broker: Confluent Platform 3.3.0 or above.
 * Connect: Confluent Platform 4.1.0 or above.
