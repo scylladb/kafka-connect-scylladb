@@ -100,6 +100,7 @@ Save these configs in a file *kafka-connect-scylladb.json* and run the following
        "topics" : "topic1,topic2,topic3",
        "scylladb.contact.points" : "scylladb-hosts",
        "scylladb.keyspace" : "test"
+       }
 }
 ```
 
