@@ -118,7 +118,7 @@ curl -s -X PUT -H 'Content-Type: application/json' --data @kafka-connect-scyllad
 
 Once the Connector is up and running, use the command ``kafka-avro-console-producer`` to produce records(in AVRO format) into Kafka topic.
 
-Example:
+Example of adding data:
 
 ```
 kafka-avro-console-producer 
@@ -142,6 +142,19 @@ select * from test.topic1;
 
   1 |     first |     last
   ```
+
+Example of deleting data:
+
+```
+sudo kafka-avro-console-producer \
+--broker-list localhost:9092 \
+--topic topic1 \
+--property parse.key=true \
+--property key.schema='{"type":"record","name":"key_schema","fields":[{"name":"id","type":"int"}]}' \
+--property key.separator='$' \
+--property value.schema='{"type":"null"}'
+{"id":1}$null
+```
 
 
 ##Modes in ScyllaDB
