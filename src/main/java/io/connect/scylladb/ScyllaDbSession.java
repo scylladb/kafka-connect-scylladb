@@ -1,6 +1,6 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.BatchStatement;
+import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Statement;
@@ -78,11 +78,13 @@ public interface ScyllaDbSession extends Closeable {
     RecordToBoundStatementConverter insert(String tableName, TopicConfigs topicConfigs);
 
     /**
-     * Method is used to add prepared statements for the offsets that are in the current batch.
-     * @param batch statement batch that will be written to ScyllaDb
-     * @param offsetStates The list of SinkOffsetStates for the current batch of SinkRecords.
+     * Method generates a BoundStatement, that inserts the offset metadata
+     * for a given topic and partition.
+     * @param topicPartition topic and partition for the offset
+     * @param metadata offset metadata to be inserted
+     * @return statement that inserts the provided offset to Scylla.
      */
-    void addOffsetsToBatch(BatchStatement batch, Map<TopicPartition, OffsetAndMetadata> offsetStates);
+    BoundStatement getInsertOffsetStatement(TopicPartition topicPartition, OffsetAndMetadata metadata);
 
     /**
      * Method is used to load offsets from storage in ScyllaDb

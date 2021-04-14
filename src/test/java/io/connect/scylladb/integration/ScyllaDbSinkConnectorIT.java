@@ -813,9 +813,9 @@ public class ScyllaDbSinkConnectorIT {
               topicPartition, new OffsetAndMetadata(123451234L)
       );
 
-      BatchStatement statement = new BatchStatement();
-      session.addOffsetsToBatch(statement, offsets);
-      session.executeStatement(statement);
+      offsets.entrySet().stream()
+        .map(e -> session.getInsertOffsetStatement(e.getKey(), e.getValue()))
+        .forEach(session::executeStatement);
     }
     this.task.start(settings);
     task.put(

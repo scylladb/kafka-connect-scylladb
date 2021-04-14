@@ -168,12 +168,16 @@ public class ScyllaDbSinkTask extends SinkTask {
       Map<TopicPartition, OffsetAndMetadata> currentOffsets
   ) {
     if (config.isOffsetEnabledInScyllaDb()) {
-      BatchStatement batch = new BatchStatement();
-      this.getValidSession().addOffsetsToBatch(batch, topicOffsets);
-
       try {
         log.debug("flush() - Flushing offsets to {}", this.config.offsetStorageTable);
-        getValidSession().executeStatement(batch);
+        List<ResultSetFuture> insertFutures = currentOffsets.entrySet().stream()
+          .map(e -> this.getValidSession().getInsertOffsetStatement(e.getKey(), e.getValue()))
+          .map(s -> getValidSession().executeStatementAsync(s))
+          .collect(Collectors.toList());
+
+        for (ResultSetFuture future : insertFutures) {
+          future.getUninterruptibly(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
+        }
       } catch (TransportException ex) {
         log.debug("put() - Setting clusterValid = false", ex);
         getValidSession().setInvalid();
