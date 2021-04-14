@@ -52,7 +52,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final String offsetStorageTable;
   public final long statementTimeoutMs;
   public final String loadBalancingLocalDc;
-  public final long timestampResolutionMs;
   public final Map<String, TopicConfigs> topicWiseConfigs;
   public final Integer ttl;
   public final BehaviorOnError behaviourOnError;
@@ -140,7 +139,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.offsetStorageTable = getString(OFFSET_STORAGE_TABLE_CONF);
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
-    this.timestampResolutionMs = getLong(TIMESTAMP_RESOLUTION_MS_CONF);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
 
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
@@ -277,12 +275,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "After this interval elapses, Scylladb will remove these records. "
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
-
-
-  public static final String TIMESTAMP_RESOLUTION_MS_CONF = "scylladb.timestamp.resolution.ms";
-  private static final String TIMESTAMP_RESOLUTION_MS_DOC = "The batch resolution time, "
-          + "in case of this value being zero, the Connector will not batch the records, else, "
-          + "kafka records within the resolution time will be batched. Default value is set to zero.";
 
   private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
@@ -597,17 +589,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     4,
                     ConfigDef.Width.SHORT,
                     "Enable offset stored in ScyllaDB")
-            .define(
-                    TIMESTAMP_RESOLUTION_MS_CONF,
-                    ConfigDef.Type.LONG,
-                    0,
-                    ConfigDef.Range.atLeast(0),
-                    ConfigDef.Importance.LOW,
-                    TIMESTAMP_RESOLUTION_MS_DOC,
-                    WRITE_GROUP,
-                    6,
-                    ConfigDef.Width.SHORT,
-                    "Timestamp Threshold (in ms)")
             .define(
                     BEHAVIOR_ON_ERROR_CONFIG,
                     ConfigDef.Type.STRING,

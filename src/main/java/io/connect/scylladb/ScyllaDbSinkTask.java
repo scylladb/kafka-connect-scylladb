@@ -11,7 +11,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.CodecRegistry;
 import com.datastax.driver.core.ConsistencyLevel;
@@ -144,17 +143,6 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
-  }
-
-  private boolean isRecordWithinTimestampResolution(BoundStatement boundStatement,
-                                                    BatchStatement latestBatchStatement) {
-    long timeDiffFromInitialRecord = boundStatement.getDefaultTimestamp()
-            - Iterables.get(latestBatchStatement.getStatements(), 0).getDefaultTimestamp();
-    return timeDiffFromInitialRecord <= config.timestampResolutionMs;
-  }
-
-  private static int statementSize(Statement statement) {
-    return statement.requestSizeInBytes(ProtocolVersion.V4, CodecRegistry.DEFAULT_INSTANCE);
   }
 
   /**

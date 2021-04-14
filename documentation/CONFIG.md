@@ -257,16 +257,6 @@ Also, these topic level configurations will be override the behavior of Connecto
   * Importance: Medium
   * Default Value: True
   
-``scylladb.timestamp.resolution.ms``
-
-  The batch resolution time, in case of this value being zero, the Connector will not batch the records, 
-  else, kafka records within the resolution time will be batched. Default value is set to zero.
-
-  * Type: Long
-  * Importance: Low
-  * Valid Values: [0,...]
-  * Default Value: 0
-  
 ###ScyllaDB
 
 ``behavior.on.error``
