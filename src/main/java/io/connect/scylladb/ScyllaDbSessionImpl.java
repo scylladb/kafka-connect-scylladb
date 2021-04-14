@@ -1,6 +1,5 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.KeyspaceMetadata;
@@ -170,33 +169,25 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
   private PreparedStatement offsetPreparedStatement;
 
-
   @Override
-  public void addOffsetsToBatch(
-      BatchStatement batch,
-      Map<TopicPartition, OffsetAndMetadata> currentOffsets
-  ) {
-    for (Map.Entry<TopicPartition, OffsetAndMetadata> kvp : currentOffsets.entrySet()) {
-      final TopicPartition topicPartition = kvp.getKey();
-      final OffsetAndMetadata metadata = kvp.getValue();
-
-      final BoundStatement statement;
-      if (null == this.offsetPreparedStatement) {
-        this.offsetPreparedStatement =
-            createInsertPreparedStatement(this.config.offsetStorageTable, null);
-      }
-      log.debug(
-          "addOffsetsToBatch() - Setting offset to {}:{}:{}",
-          topicPartition.topic(),
-          topicPartition.partition(),
-          metadata.offset()
-      );
-      statement = offsetPreparedStatement.bind();
-      statement.setString("topic", topicPartition.topic());
-      statement.setInt("partition", topicPartition.partition());
-      statement.setLong("offset", metadata.offset());
-      batch.add(statement);
+  public BoundStatement getInsertOffsetStatement(
+      TopicPartition topicPartition,
+      OffsetAndMetadata metadata) {
+    if (null == this.offsetPreparedStatement) {
+      this.offsetPreparedStatement =
+              createInsertPreparedStatement(this.config.offsetStorageTable, null);
     }
+    log.debug(
+            "getAddOffsetsStatement() - Setting offset to {}:{}:{}",
+            topicPartition.topic(),
+            topicPartition.partition(),
+            metadata.offset()
+    );
+    final BoundStatement statement = offsetPreparedStatement.bind();
+    statement.setString("topic", topicPartition.topic());
+    statement.setInt("partition", topicPartition.partition());
+    statement.setLong("offset", metadata.offset());
+    return statement;
   }
 
   @Override
