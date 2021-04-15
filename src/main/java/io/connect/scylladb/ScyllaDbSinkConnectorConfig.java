@@ -51,7 +51,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final File keyStorePath;
   public final String offsetStorageTable;
   public final long statementTimeoutMs;
-  public final int maxBatchSizeKb;
   public final String loadBalancingLocalDc;
   public final long timestampResolutionMs;
   public final Map<String, TopicConfigs> topicWiseConfigs;
@@ -140,7 +139,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
     this.offsetStorageTable = getString(OFFSET_STORAGE_TABLE_CONF);
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
-    this.maxBatchSizeKb = getInt(MAX_BATCH_SIZE_CONFIG);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.timestampResolutionMs = getLong(TIMESTAMP_RESOLUTION_MS_CONF);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
@@ -280,13 +278,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
 
-  public static final String MAX_BATCH_SIZE_CONFIG = "scylladb.max.batch.size.kb";
-  public static final int MAX_BATCH_SIZE_DEFAULT = 5;
-  private static final String MAX_BATCH_SIZE_DOC = "Maximum size(in kilobytes) of a single batch "
-          + "consisting ScyllaDB operations. The should be equal to batch_size_warn_threshold_in_kb "
-          + "and 1/10th of the batch_size_fail_threshold_in_kb configured in scylla.yaml. "
-          + "The default value is set to 5kb, any change in this configuration should be accompanied by "
-          + "change in scylla.yaml.";
 
   public static final String TIMESTAMP_RESOLUTION_MS_CONF = "scylladb.timestamp.resolution.ms";
   private static final String TIMESTAMP_RESOLUTION_MS_DOC = "The batch resolution time, "
@@ -606,17 +597,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     4,
                     ConfigDef.Width.SHORT,
                     "Enable offset stored in ScyllaDB")
-            .define(
-                    MAX_BATCH_SIZE_CONFIG,
-                    ConfigDef.Type.INT,
-                    MAX_BATCH_SIZE_DEFAULT,
-                    ConfigDef.Range.atLeast(1),
-                    ConfigDef.Importance.HIGH,
-                    MAX_BATCH_SIZE_DOC,
-                    WRITE_GROUP,
-                    5,
-                    ConfigDef.Width.LONG,
-                    "Max Batch Size (in kb)")
             .define(
                     TIMESTAMP_RESOLUTION_MS_CONF,
                     ConfigDef.Type.LONG,
