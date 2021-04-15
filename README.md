@@ -61,21 +61,6 @@ This is the default behaviour of the connector. Here, the offset is stored in th
 
 If you want that offset should be managed in kafka then you must specify ``scylladb.offset.storage.table.enable=false``. By default, this property is true (in this case offset will be stored in the ScyllaDB table).
 
----------------
-Troubleshooting
----------------
-
-If you encounter error messages like this:
-
-
-    Batch for [test.twitter] is of size 127.661KiB, exceeding specified threshold of 50.000KiB by 77.661KiB
-
-Or warning messages like this:
-
-    Batch for [test.twitter] is of size 25.885KiB, exceeding specified threshold of 5.000KiB by 20.885KiB
-
-Try adjusting the ``consumer.max.poll.records`` setting in the worker.properties for |kconnect-long|.
-
 -----------------------
 Reporting Kafka Metrics
 -----------------------

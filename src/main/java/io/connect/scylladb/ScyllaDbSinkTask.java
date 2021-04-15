@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 import com.datastax.driver.core.BatchStatement;
 import com.datastax.driver.core.BoundStatement;
@@ -95,81 +96,33 @@ public class ScyllaDbSinkTask extends SinkTask {
    */
   @Override
   public void put(Collection<SinkRecord> records) {
-    int count = 0;
     final List<ResultSetFuture> futures = new ArrayList<>(records.size());
 
-    //create a map containing topic, partition number and list of records
-    Map<TopicPartition, List<BatchStatement>> batchesPerTopicPartition = new HashMap<>();
-
-    int configuredMaxBatchSize = config.maxBatchSizeKb * 1024;
     for (SinkRecord record : records) {
       try {
         ScyllaDbSinkTaskHelper scyllaDbSinkTaskHelper = new ScyllaDbSinkTaskHelper(config, getValidSession());
         scyllaDbSinkTaskHelper.validateRecord(record);
 
-        final String topicName = record.topic();
-        final int partition = record.kafkaPartition();
-
         BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
-        log.trace("put() - Adding Bound Statement {} for {}:{}:{}",
+        log.trace("put() - Executing Bound Statement {} for {}:{}:{}",
                 boundStatement.preparedStatement().getQueryString(),
                 record.topic(),
                 record.kafkaPartition(),
                 record.kafkaOffset()
         );
-        List<BatchStatement> batchStatementList =
-                batchesPerTopicPartition.containsKey(new TopicPartition(topicName, partition))
-                        ? batchesPerTopicPartition.get(new TopicPartition(topicName, partition))
-                        : new ArrayList<>();
 
-        BatchStatement latestBatchStatement =
-                batchStatementList.size() > 0
-                        ? batchStatementList.get(batchStatementList.size() - 1)
-                        : new BatchStatement(BatchStatement.Type.UNLOGGED);
-
-        int totalBatchSize = (latestBatchStatement.size() > 0
-                ? statementSize(latestBatchStatement)
-                : 0)
-                + statementSize(boundStatement);
-
-        boolean shouldWriteStatementInCurrentBatch = latestBatchStatement.size() > 0
-                && isRecordWithinTimestampResolution(boundStatement, latestBatchStatement);
-
-        if (totalBatchSize <= configuredMaxBatchSize && shouldWriteStatementInCurrentBatch) {
-          latestBatchStatement.add(boundStatement);
-          latestBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
-        } else {
-          BatchStatement newBatchStatement = new BatchStatement(BatchStatement.Type.UNLOGGED);
-          newBatchStatement.add(boundStatement);
-          newBatchStatement.setDefaultTimestamp(boundStatement.getDefaultTimestamp());
-          batchStatementList.add(newBatchStatement);
-        }
-        batchesPerTopicPartition.put(new TopicPartition(topicName, partition), batchStatementList);
         // Commit offset in the case of successful processing of sink record
         topicOffsets.put(new TopicPartition(record.topic(), record.kafkaPartition()),
                 new OffsetAndMetadata(record.kafkaOffset() + 1));
+
+        ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(boundStatement);
+        futures.add(resultSetFuture);
       } catch (DataException | NullPointerException ex) {
         handleErrors(record, ex);
       }
     }
 
-    for (List<BatchStatement> batchStatementList : batchesPerTopicPartition.values()) {
-      for (BatchStatement batchStatement : batchStatementList) {
-        ConsistencyLevel consistencyLevel = config.consistencyLevel;
-        Statement firstStatement = batchStatement.getStatements().iterator().next();
-        if (config.topicWiseConfigs.containsKey(firstStatement.getKeyspace())) {
-          consistencyLevel = firstStatement.getConsistencyLevel();
-        }
-        batchStatement.setConsistencyLevel(consistencyLevel);
-        log.trace("put() - Executing Batch Statement with Consistency Level {} of size {}",
-                consistencyLevel, batchStatement.size());
-        ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(batchStatement);
-        futures.add(resultSetFuture);
-        count++;
-      }
-    }
-
-    if (count > 0) {
+    if (!futures.isEmpty()) {
       try {
         log.debug("put() - Checking future(s)");
         for (ResultSetFuture future : futures) {
