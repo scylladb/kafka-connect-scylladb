@@ -171,7 +171,6 @@ can be forced by using double-quotes ("myTable" is different from mytable).
 ``scylladb.offset.storage.table``
 
   The table within the ScyllaDB keyspace to store the offsets that have been read from Apache Kafka.
-  This is used to enable exactly once delivery to ScyllaDB.
 
   * Type: String
   * Importance: Low
@@ -251,7 +250,7 @@ Also, these topic level configurations will be override the behavior of Connecto
 ``scylladb.offset.storage.table.enable``
 
   If true, Kafka consumer offsets will be stored in ScyllaDB table. If false, connector will skip writing offset 
-  information into ScyllaDB (this might imply duplicate writes into ScyllaDB when a task restarts).
+  information into ScyllaDB.
 
   * Type: Boolean
   * Importance: Medium
