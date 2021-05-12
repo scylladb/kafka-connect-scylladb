@@ -61,6 +61,17 @@ This is the default behaviour of the connector. Here, the offset is stored in th
 
 If you want that offset should be managed in kafka then you must specify ``scylladb.offset.storage.table.enable=false``. By default, this property is true (in this case offset will be stored in the ScyllaDB table).
 
+-------------------
+Delivery guarantees
+-------------------
+This connector has at-least-once semantics. In case of a crash or restart, an `INSERT` operation of some rows
+might be performed multiple times (at least once). However, `INSERT` operations are idempotent in Scylla, meaning
+there won't be any duplicate rows in the destination table.
+ 
+The only time you could see the effect of duplicate `INSERT` operations is if your destination table has 
+[Scylla CDC](https://docs.scylladb.com/using-scylla/cdc/) turned on. In the CDC log table you would see duplicate
+`INSERT` operations as separate CDC log rows. 
+
 -----------------------
 Reporting Kafka Metrics
 -----------------------
