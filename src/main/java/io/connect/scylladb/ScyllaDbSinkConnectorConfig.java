@@ -234,14 +234,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String OFFSET_STORAGE_TABLE_CONF = "scylladb.offset.storage.table";
   private static final String OFFSET_STORAGE_TABLE_DOC = "The table within the Scylladb keyspace "
-          + "to store the offsets that have been read from Kafka. This is used to enable exactly once "
-          + "delivery to ScyllaDb.";
+          + "to store the offsets that have been read from Kafka.";
 
   public static final String ENABLE_OFFSET_STORAGE_TABLE = "scylladb.offset.storage.table.enable";
   private static final Boolean ENABLE_OFFSET_STORAGE_TABLE_DEFAULT = true;
   private static final String ENABLE_OFFSET_STORAGE_TABLE_DOC = "If true, Kafka consumer offsets will "
           + "be stored in Scylladb table. If false, connector will skip writing offset information into "
-          + "Scylladb (this might imply duplicate writes into Scylladb when a task restarts).";
+          + "Scylladb.";
 
   public static final String EXECUTE_STATEMENT_TIMEOUT_MS_CONF = "scylladb.execute.timeout.ms";
   private static final String EXECUTE_STATEMENT_TIMEOUT_MS_DOC = "The timeout for executing a ScyllaDB statement.";
