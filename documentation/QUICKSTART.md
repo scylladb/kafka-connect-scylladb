@@ -216,7 +216,7 @@ Example:
 
 ```
 kafka-console-producer --broker-list localhost:9092 --topic sample-topic
->{"schema":{"type":"struct","fields":[{"type":"int32","optional":false,"field":"id"},{"type":"string","optional":false,"field":"name"},{"type":"string","optional":true,"field":"department"},"payload":{"id":10,"name":"John Doe10","department":"engineering"}}
+>{"schema":{"type":"struct","fields":[{"type":"int32","optional":false,"field":"id"},{"type":"string","optional":false,"field":"name"},{"type":"string","optional":true,"field":"department"}],"payload":{"id":10,"name":"John Doe10","department":"engineering"}}}
 ```
 
 Run the select query to view the data:
