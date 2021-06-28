@@ -31,6 +31,7 @@ public class TopicConfigs {
   private Long timeStamp;
   private boolean deletesEnabled;
   private boolean isScyllaColumnsMapped;
+  private String keyspace;
 
   public TopicConfigs(Map<String, String> configsMapForTheTopic,
                       ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig) {
@@ -39,6 +40,11 @@ public class TopicConfigs {
     this.consistencyLevel = scyllaDbSinkConnectorConfig.consistencyLevel;
     this.ttl = scyllaDbSinkConnectorConfig.ttl;
     this.deletesEnabled = scyllaDbSinkConnectorConfig.deletesEnabled;
+    if (configsMapForTheTopic.containsKey("keyspace")) {
+      this.keyspace = configsMapForTheTopic.get("keyspace");
+    } else {
+      this.keyspace = scyllaDbSinkConnectorConfig.keyspace;
+    }
     if (configsMapForTheTopic.containsKey("mapping")) {
       this.mappingStringForTopic = configsMapForTheTopic.get("mapping");
     }
@@ -217,6 +223,10 @@ public class TopicConfigs {
 
   public boolean isDeletesEnabled() {
     return deletesEnabled;
+  }
+
+  public String getKeyspace() {
+    return keyspace;
   }
 
   public class KafkaScyllaColumnMapper {

@@ -60,7 +60,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final File privateKeyPath;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(keyspace|mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
 
   static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION =
       ImmutableMap.of(

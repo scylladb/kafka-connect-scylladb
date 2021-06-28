@@ -4,9 +4,9 @@ import com.datastax.driver.core.BoundStatement;
 import com.google.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.DataException;
+import org.apache.kafka.connect.header.Header;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +19,6 @@ public class ScyllaDbSinkTaskHelper {
 
   private ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig;
   private ScyllaDbSession session;
-  private Map<TopicPartition, Integer> topicPartitionRecordSizeMap;
 
 
   public ScyllaDbSinkTaskHelper(ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig,
@@ -48,6 +47,17 @@ public class ScyllaDbSinkTaskHelper {
     }
   }
 
+  private String extractKeyspace(SinkRecord record, TopicConfigs topicConfigs) {
+    Header keyspaceHeader = record.headers().lastWithName("keyspace");
+    if (keyspaceHeader != null) {
+      return keyspaceHeader.value().toString();
+    } else if (topicConfigs != null && topicConfigs.getKeyspace() != null) {
+      return topicConfigs.getKeyspace();
+    } else {
+      return scyllaDbSinkConnectorConfig.keyspace;
+    }
+  }
+
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     final String tableName = record.topic();
     BoundStatement boundStatement = null;
@@ -59,12 +69,13 @@ public class ScyllaDbSinkTaskHelper {
       }
       topicConfigs.setTtlAndTimeStampIfAvailable(record);
     }
+    final String keyspace = extractKeyspace(record, topicConfigs);
     if (null == record.value()) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
       if (deletionEnabled) {
-        if (this.session.tableExists(tableName)) {
-          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
+        if (this.session.tableExists(keyspace, tableName)) {
+          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(keyspace, tableName);
           final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION);
           Preconditions.checkState(
                   state.parameters > 0,
@@ -82,8 +93,8 @@ public class ScyllaDbSinkTaskHelper {
                         record.key()));
       }
     } else {
-      this.session.createOrAlterTable(tableName, record, topicConfigs);
-      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
+      this.session.createOrAlterTable(keyspace, tableName, record, topicConfigs);
+      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(keyspace, tableName, topicConfigs);
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
     }

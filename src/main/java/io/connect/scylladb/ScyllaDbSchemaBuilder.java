@@ -15,7 +15,6 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ComparisonChain;
 import io.connect.scylladb.topictotable.TopicConfigs;
-import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.connect.data.Date;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.errors.DataException;
@@ -134,6 +133,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
   void alter(
           final ScyllaDbSchemaKey key,
+          String keyspace,
           String tableName,
           SinkRecord record,
           TableMetadata.Table tableMetadata,
@@ -192,7 +192,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
      */
 
     if (!addedColumns.isEmpty()) {
-      final Alter alterTable = SchemaBuilder.alterTable(this.config.keyspace, tableName);
+      final Alter alterTable = SchemaBuilder.alterTable(keyspace, tableName);
       if (!this.config.tableManageEnabled) {
         List<String> requiredAlterStatements = addedColumns.entrySet().stream()
                 .map(e -> alterTable.addColumn(e.getKey()).type(e.getValue()).toString())
@@ -215,16 +215,16 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
           final Statement alterStatement = alterTable.addColumn(columnName).type(dataType);
           this.session.executeStatement(alterStatement);
         }
-        this.session.onTableChanged(this.config.keyspace, tableName);
+        this.session.onTableChanged(keyspace, tableName);
       }
     }
 
     this.schemaLookup.put(key, DEFAULT);
   }
 
-  public void build(String tableName, SinkRecord record, TopicConfigs topicConfigs) {
-    log.trace("build() - tableName = '{}'", tableName);
-    final ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(this.config.keyspace, tableName);
+  public void build(String keyspace, String tableName, SinkRecord record, TopicConfigs topicConfigs) {
+    log.trace("build() - tableName = '{}.{}'", keyspace, tableName);
+    final ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(keyspace, tableName);
     if (null != this.schemaLookup.getIfPresent(key)) {
       return;
     }
@@ -236,18 +236,18 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       return;
     }
 
-
-    final TableMetadata.Table tableMetadata = this.session.tableMetadata(tableName);
+    final TableMetadata.Table tableMetadata = this.session.tableMetadata(keyspace, tableName);
 
     if (null != tableMetadata) {
-      alter(key, tableName, record, tableMetadata, topicConfigs);
+      alter(key, keyspace, tableName, record, tableMetadata, topicConfigs);
     } else {
-      create(key, tableName, record, topicConfigs);
+      create(key, keyspace, tableName, record, topicConfigs);
     }
   }
 
   void create(
           final ScyllaDbSchemaKey key,
+          String keyspace,
           String tableName,
           SinkRecord record,
           TopicConfigs topicConfigs
@@ -303,7 +303,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       }
     }
 
-    Create create = SchemaBuilder.createTable(this.config.keyspace, tableName);
+    Create create = SchemaBuilder.createTable(keyspace, tableName);
     final TableOptions<?> tableOptions = create.withOptions();
     if (!Strings.isNullOrEmpty(valueSchema.doc())) {
       tableOptions.comment(valueSchema.doc());
@@ -338,7 +338,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
     if (this.config.tableManageEnabled) {
       tableOptions.compressionOptions(config.tableCompressionAlgorithm).buildInternal();
-      log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, tableOptions);
+      log.info("create() - Adding table {}.{}\n{}", keyspace, tableName, tableOptions);
       session.executeStatement(tableOptions);
     } else {
       throw new DataException(

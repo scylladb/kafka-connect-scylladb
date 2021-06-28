@@ -7,7 +7,6 @@ import com.datastax.driver.core.Statement;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.io.Closeable;
@@ -35,13 +34,13 @@ public interface ScyllaDbSession extends Closeable {
      * Lookup metadata for a table.
      * @param tableName name of the table
      */
-    TableMetadata.Table tableMetadata(String tableName);
+    TableMetadata.Table tableMetadata(String keyspace, String tableName);
 
     /**
      * Check if a table exists.
      * @param tableName name of the table
      */
-    boolean tableExists(String tableName);
+    boolean tableExists(String keyspace, String tableName);
 
     /**
      * Ensure that a table has a specified schema.
@@ -50,7 +49,7 @@ public interface ScyllaDbSession extends Closeable {
      * valueSchema that will be used for the rest of the table.
      * @param topicConfigs class containing mapping details for the record
      */
-    void createOrAlterTable(String tableName, SinkRecord sinkRecord, TopicConfigs topicConfigs);
+    void createOrAlterTable(String keyspace, String tableName, SinkRecord sinkRecord, TopicConfigs topicConfigs);
 
     /**
      * Flag to determine if the session is valid.
@@ -67,7 +66,7 @@ public interface ScyllaDbSession extends Closeable {
      * @param tableName table to return the RecordToBoundStatementConverter for
      * @return RecordToBoundStatementConverter that can be used for the record.
      */
-    RecordToBoundStatementConverter delete(String tableName);
+    RecordToBoundStatementConverter delete(String keyspace, String tableName);
 
     /**
      * Method will return a RecordToBoundStatementConverter for an insert the supplied table.
@@ -75,7 +74,7 @@ public interface ScyllaDbSession extends Closeable {
      * @param topicConfigs class containing mapping details for the record
      * @return RecordToBoundStatementConverter that can be used for the record.
      */
-    RecordToBoundStatementConverter insert(String tableName, TopicConfigs topicConfigs);
+    RecordToBoundStatementConverter insert(String keyspace, String tableName, TopicConfigs topicConfigs);
 
     /**
      * Method generates a BoundStatement, that inserts the offset metadata
@@ -91,7 +90,7 @@ public interface ScyllaDbSession extends Closeable {
      * @param assignment The assignment of TopicPartitions that have been assigned to this task.
      * @return The offsets by TopicPartition based on the assignment.
      */
-    Map<TopicPartition, Long> loadOffsets(Set<TopicPartition> assignment);
+    Map<TopicPartition, Long> loadOffsets(String keyspace, Set<TopicPartition> assignment);
 
     /**
      * Callback that is fired when a table has changed.

@@ -16,7 +16,6 @@ import com.datastax.driver.core.querybuilder.Select;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,12 +67,12 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public TableMetadata.Table tableMetadata(String tableName) {
-    log.trace("tableMetadata() - tableName = '{}'", tableName);
+  public TableMetadata.Table tableMetadata(String keyspace, String tableName) {
+    log.trace("tableMetadata() - tableName = '{}.{}'", keyspace, tableName);
     TableMetadata.Table result = this.tableMetadataCache.get(tableName);
 
     if (null == result) {
-      final KeyspaceMetadata keyspaceMetadata = cluster.getMetadata().getKeyspace(config.keyspace);
+      final KeyspaceMetadata keyspaceMetadata = cluster.getMetadata().getKeyspace(keyspace);
       final com.datastax.driver.core.TableMetadata tableMetadata = keyspaceMetadata.getTable(tableName);
       if (null != tableMetadata) {
         result = new TableMetadataImpl.TableImpl(tableMetadata);
@@ -87,13 +86,13 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public boolean tableExists(String tableName) {
-    return null != tableMetadata(tableName);
+  public boolean tableExists(String keyspace, String tableName) {
+    return null != tableMetadata(keyspace, tableName);
   }
 
   @Override
-  public void createOrAlterTable(String tableName, SinkRecord record, TopicConfigs topicConfigs) {
-    this.schemaBuilder.build(tableName, record, topicConfigs);
+  public void createOrAlterTable(String keyspace, String tableName, SinkRecord record, TopicConfigs topicConfigs) {
+    this.schemaBuilder.build(keyspace, tableName, record, topicConfigs);
   }
 
   @Override
@@ -108,15 +107,15 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
 
   @Override
-  public RecordToBoundStatementConverter delete(String tableName) {
+  public RecordToBoundStatementConverter delete(String keyspace, String tableName) {
     return this.deleteStatementCache.computeIfAbsent(
         tableName,
         new Function<String, RecordToBoundStatementConverter>() {
           @Override
           public RecordToBoundStatementConverter apply(String tableName) {
             Delete statement = QueryBuilder.delete()
-                .from(config.keyspace, tableName);
-            TableMetadata.Table tableMetadata = tableMetadata(tableName);
+                .from(keyspace, tableName);
+            TableMetadata.Table tableMetadata = tableMetadata(keyspace, tableName);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
               statement.where(
                   QueryBuilder.eq(
@@ -132,9 +131,9 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     );
   }
 
-  private PreparedStatement createInsertPreparedStatement(String tableName, TopicConfigs topicConfigs) {
-    Insert statement = QueryBuilder.insertInto(config.keyspace, tableName);
-    TableMetadata.Table tableMetadata = tableMetadata(tableName);
+  private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, TopicConfigs topicConfigs) {
+    Insert statement = QueryBuilder.insertInto(keyspace, tableName);
+    TableMetadata.Table tableMetadata = tableMetadata(keyspace, tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
       statement.value(columnMetadata.getName(), QueryBuilder.bindMarker(columnMetadata.getName()));
     }
@@ -149,9 +148,9 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public RecordToBoundStatementConverter insert(String tableName, TopicConfigs topicConfigs) {
+  public RecordToBoundStatementConverter insert(String keyspace, String tableName, TopicConfigs topicConfigs) {
     if (topicConfigs != null && topicConfigs.getTtl() != null) {
-      PreparedStatement preparedStatement = createInsertPreparedStatement(tableName, topicConfigs);
+      PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, topicConfigs);
       return new RecordToBoundStatementConverter(preparedStatement);
     } else {
       return this.insertStatementCache.computeIfAbsent(
@@ -159,7 +158,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
               new Function<String, RecordToBoundStatementConverter>() {
                 @Override
                 public RecordToBoundStatementConverter apply(String tableName) {
-                  PreparedStatement preparedStatement = createInsertPreparedStatement(tableName, topicConfigs);
+                  PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, topicConfigs);
                   return new RecordToBoundStatementConverter(preparedStatement);
                 }
               }
@@ -175,7 +174,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
       OffsetAndMetadata metadata) {
     if (null == this.offsetPreparedStatement) {
       this.offsetPreparedStatement =
-              createInsertPreparedStatement(this.config.offsetStorageTable, null);
+              createInsertPreparedStatement(config.keyspace, this.config.offsetStorageTable, null);
     }
     log.debug(
             "getAddOffsetsStatement() - Setting offset to {}:{}:{}",
@@ -191,12 +190,12 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public Map<TopicPartition, Long> loadOffsets(Set<TopicPartition> assignment) {
+  public Map<TopicPartition, Long> loadOffsets(String keyspace, Set<TopicPartition> assignment) {
     Map<TopicPartition, Long> result = new HashMap<>();
     if (null != assignment && !assignment.isEmpty()) {
       final Select.Where partitionQuery = QueryBuilder.select()
           .column("offset")
-          .from(this.config.keyspace, this.config.offsetStorageTable)
+          .from(keyspace, this.config.offsetStorageTable)
           .where(QueryBuilder.eq("topic", QueryBuilder.bindMarker("topic")))
           .and(QueryBuilder.eq("partition", QueryBuilder.bindMarker("partition")));
       log.debug("loadOffsets() - Preparing statement. {}", partitionQuery);

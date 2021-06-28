@@ -55,7 +55,7 @@ public class ScyllaDbSinkTask extends SinkTask {
     if (config.isOffsetEnabledInScyllaDb()) {
       Set<TopicPartition> assignment = context.assignment();
       this.session = getValidSession();
-      Map<TopicPartition, Long> offsets = session.loadOffsets(assignment);
+      Map<TopicPartition, Long> offsets = session.loadOffsets(config.keyspace, assignment);
       if (!offsets.isEmpty()) {
         context.offset(offsets);
       }
