@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import com.datastax.driver.core.DataType;
+import com.datastax.driver.core.Metadata;
 import com.datastax.driver.core.SchemaChangeListenerBase;
 import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.schemabuilder.Alter;
@@ -15,6 +16,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ComparisonChain;
 import io.connect.scylladb.topictotable.TopicConfigs;
+
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.connect.data.Date;
 import org.apache.kafka.connect.data.*;
@@ -165,7 +167,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
         if (null == columnMetadata) {
           log.debug("alter for mapping() - Adding column '{}'", columnName);
           final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-          addedColumns.put(columnName, dataType);
+          addedColumns.put(Metadata.quoteIfNecessary(columnName), dataType);
         } else {
           log.trace("alter for mapping() - Table already has '{}' column.", columnName);
         }
@@ -178,7 +180,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
         if (null == columnMetadata) {
           log.debug("alter() - Adding column '{}'", field.name());
           DataType dataType = dataType(field.schema());
-          addedColumns.put(field.name(), dataType);
+          addedColumns.put(Metadata.quoteIfNecessary(field.name()), dataType);
         } else {
           log.trace("alter() - Table already has '{}' column.", field.name());
         }
@@ -311,28 +313,31 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
     if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTablePartitionKeyMap().entrySet()) {
         final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-        create.addPartitionKey(entry.getValue().getScyllaColumnName(), dataType);
+        final String columnName = Metadata.quoteIfNecessary(entry.getValue().getScyllaColumnName());
+        create.addPartitionKey(columnName, dataType);
       }
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTableColumnMap().entrySet()) {
         final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-        create.addColumn(entry.getValue().getScyllaColumnName(), dataType);
+        final String columnName = Metadata.quoteIfNecessary(entry.getValue().getScyllaColumnName());
+        create.addColumn(columnName, dataType);
       }
     } else {
       Set<String> fields = new HashSet<>();
       for (final Field keyField : keySchema.fields()) {
         final DataType dataType = dataType(keyField.schema());
-        create.addPartitionKey(keyField.name(), dataType);
-        fields.add(keyField.name());
+        final String columnName = Metadata.quoteIfNecessary(keyField.name());
+        create.addPartitionKey(columnName, dataType);
+        fields.add(columnName);
       }
 
       for (final Field valueField : valueSchema.fields()) {
-        if (fields.contains(valueField.name())) {
+        final String columnName = Metadata.quoteIfNecessary(valueField.name());
+        final DataType dataType = dataType(valueField.schema());
+        if (fields.contains(columnName)) {
           log.trace("create() - Skipping '{}' because it's already in the key.", valueField.name());
           continue;
         }
-
-        final DataType dataType = dataType(valueField.schema());
-        create.addColumn(valueField.name(), dataType);
+        create.addColumn(columnName, dataType);
       }
     }
 
