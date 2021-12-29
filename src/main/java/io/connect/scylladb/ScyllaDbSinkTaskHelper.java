@@ -49,7 +49,7 @@ public class ScyllaDbSinkTaskHelper {
   }
 
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
-    final String tableName = record.topic();
+    final String tableName = record.topic().replaceAll("\\.", "_").replaceAll("-", "_");
     BoundStatement boundStatement = null;
     TopicConfigs topicConfigs = null;
     if (scyllaDbSinkConnectorConfig.topicWiseConfigs.containsKey(tableName)) {
