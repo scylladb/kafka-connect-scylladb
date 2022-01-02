@@ -40,12 +40,12 @@ public class ScyllaDbSinkTask extends SinkTask {
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkTask.class);
 
   private ScyllaDbSinkConnectorConfig config;
-  private Map<TopicPartition, OffsetAndMetadata> topicOffsets;
+  private Map<TopicPartition, OffsetAndMetadata> topicOffsets = new HashMap<>();
   ScyllaDbSession session;
 
   /**
-   * Starts the sink task. 
-   * If <code>scylladb.offset.storage.table.enable</code> is set to true, 
+   * Starts the sink task.
+   * If <code>scylladb.offset.storage.table.enable</code> is set to true,
    * the task will load offsets for each Kafka topic-partition from
    * ScyllaDB offset table into task context.
    */
@@ -64,20 +64,20 @@ public class ScyllaDbSinkTask extends SinkTask {
   }
 
   /*
-   * Returns a ScyllaDB session. 
+   * Returns a ScyllaDB session.
    * Creates a session, if not already exists.
-   * In case the when session is not valid, 
+   * In case the when session is not valid,
    * it closes the existing session and creates a new one.
    */
   private ScyllaDbSession getValidSession() {
-    
+
     ScyllaDbSessionFactory sessionFactory = new ScyllaDbSessionFactory();
 
     if (session == null) {
       log.info("Creating ScyllaDb Session.");
       session = sessionFactory.newSession(this.config);
-    } 
-    
+    }
+
     if (!session.isValid()) {
       log.warn("ScyllaDb Session is invalid. Closing and creating new.");
       close();
@@ -89,7 +89,7 @@ public class ScyllaDbSinkTask extends SinkTask {
   /**
    * <ol>
    * <li>Validates the kafka records.
-   * <li>Writes or deletes records from Kafka topic into ScyllaDB. 
+   * <li>Writes or deletes records from Kafka topic into ScyllaDB.
    * <li>Requests to commit the records when the scyllaDB operations are successful.
    * </ol>
    */
@@ -146,9 +146,9 @@ public class ScyllaDbSinkTask extends SinkTask {
   }
 
   /**
-   * If <code>scylladb.offset.storage.table.enable</code> is set to true, 
-   * updates offsets in ScyllaDB table. 
-   * Else, assumes all the records in previous @put call were successfully 
+   * If <code>scylladb.offset.storage.table.enable</code> is set to true,
+   * updates offsets in ScyllaDB table.
+   * Else, assumes all the records in previous @put call were successfully
    * written in to ScyllaDB and returns the same offsets.
    */
   @Override
@@ -212,7 +212,7 @@ public class ScyllaDbSinkTask extends SinkTask {
   public void stop() {
     close();
   }
-  
+
   // Visible for testing
   void close() {
     if (null != this.session) {
