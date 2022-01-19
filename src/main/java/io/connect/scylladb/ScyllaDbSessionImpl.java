@@ -68,6 +68,17 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
+  public KeyspaceMetadata keyspaceMetadata(String keyspaceName){
+    log.trace("keyspaceMetadata() - keyspaceName = '{}'", keyspaceName);
+    return cluster.getMetadata().getKeyspace(keyspaceName);
+  }
+
+  @Override
+  public boolean keyspaceExists(String keyspaceName){
+    return keyspaceMetadata(keyspaceName) != null;
+  }
+
+  @Override
   public TableMetadata.Table tableMetadata(String tableName) {
     log.trace("tableMetadata() - tableName = '{}'", tableName);
     TableMetadata.Table result = this.tableMetadataCache.get(tableName);
