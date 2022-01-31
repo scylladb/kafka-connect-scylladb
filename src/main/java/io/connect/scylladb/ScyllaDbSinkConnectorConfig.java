@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -8,7 +9,11 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.connect.scylladb.utils.ListRecommender;
+import io.connect.scylladb.utils.NullOrReadableFile;
+import io.connect.scylladb.utils.VisibleIfEqual;
 import org.apache.kafka.common.config.AbstractConfig;
+import org.apache.kafka.common.config.Config;
 import org.apache.kafka.common.config.ConfigDef;
 
 import com.datastax.driver.core.ConsistencyLevel;
@@ -84,7 +89,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.consistencyLevel =
             ConfigUtils.getEnum(ConsistencyLevel.class, this, CONSISTENCY_LEVEL_CONFIG);
     this.username = getString(USERNAME_CONFIG);
-    this.password = getPassword(PASSWORD_CONFIG).value();
+    this.password = getPassword(PASSWORD_CONFIG) == null ? null : getPassword(PASSWORD_CONFIG).value();
     this.securityEnabled = getBoolean(SECURITY_ENABLE_CONFIG);
     this.sslEnabled = getBoolean(SSL_ENABLED_CONFIG);
     this.deletesEnabled = getBoolean(DELETES_ENABLE_CONFIG);
@@ -95,12 +100,12 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     final String trustStorePath = this.getString(SSL_TRUSTSTORE_PATH_CONFIG);
     this.trustStorePath = Strings.isNullOrEmpty(trustStorePath) ? null : new File(trustStorePath);
     this.trustStorePassword =
-            this.getPassword(SSL_TRUSTSTORE_PASSWORD_CONFIG).value().toCharArray();
+            getPassword(SSL_TRUSTSTORE_PASSWORD_CONFIG) == null ? null : getPassword(SSL_TRUSTSTORE_PASSWORD_CONFIG).value().toCharArray();
 
     final String keyStorePath = this.getString(SSL_KEYSTORE_PATH_CONFIG);
     this.keyStorePath = Strings.isNullOrEmpty(keyStorePath) ? null : new File(keyStorePath);
     this.keyStorePassword =
-            this.getPassword(SSL_KEYSTORE_PASSWORD_CONFIG).value().toCharArray();
+            getPassword(SSL_KEYSTORE_PASSWORD_CONFIG) == null ? null : getPassword(SSL_KEYSTORE_PASSWORD_CONFIG).value().toCharArray();
 
     this.cipherSuites = getList(SSL_CIPHER_SUITES_CONFIG);
 
@@ -243,6 +248,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Scylladb.";
 
   public static final String EXECUTE_STATEMENT_TIMEOUT_MS_CONF = "scylladb.execute.timeout.ms";
+  public static final Long EXECUTE_STATEMENT_TIMEOUT_MS_DEFAULT = 30000L;
   private static final String EXECUTE_STATEMENT_TIMEOUT_MS_DOC = "The timeout for executing a ScyllaDB statement.";
 
   public static final String SSL_TRUSTSTORE_PATH_CONFIG = "scylladb.ssl.truststore.path";
@@ -269,7 +275,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String TTL_CONFIG = "scylladb.ttl";
   /*If TTL value is not specified then skip setting ttl value while making insert query*/
-  public static final String TTL_DEFAULT = null;
+  public static final Integer TTL_DEFAULT = null;
   private static final String TTL_DOC = "The retention period for the data in ScyllaDB. "
           + "After this interval elapses, Scylladb will remove these records. "
           + "If this configuration is not provided, the Sink Connector will perform "
@@ -350,23 +356,25 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             .define(
                     USERNAME_CONFIG,
                     ConfigDef.Type.STRING,
-                    "cassandra",
+                    null,
                     ConfigDef.Importance.HIGH,
                     USERNAME_DOC,
                     CONNECTION_GROUP,
                     3,
                     ConfigDef.Width.SHORT,
-                    "Username")
+                    "Username",
+                    Arrays.asList(PASSWORD_CONFIG, SECURITY_ENABLE_CONFIG))
             .define(
                     PASSWORD_CONFIG,
                     ConfigDef.Type.PASSWORD,
-                    "cassandra",
+                    null,
                     ConfigDef.Importance.HIGH,
                     PASSWORD_DOC,
                     CONNECTION_GROUP,
                     4,
                     ConfigDef.Width.SHORT,
-                    "Password")
+                    "Password",
+                    Arrays.asList(USERNAME_CONFIG, SECURITY_ENABLE_CONFIG))
             .define(
                     COMPRESSION_CONFIG,
                     ConfigDef.Type.STRING,
@@ -377,7 +385,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     CONNECTION_GROUP,
                     5,
                     ConfigDef.Width.SHORT,
-                    "Compression")
+                    "Compression",
+                    new ListRecommender(Arrays.asList(CLIENT_COMPRESSION.keySet().toArray())))
             .define(
                     SSL_ENABLED_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -398,52 +407,59 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     SSL_GROUP,
                     0,
                     ConfigDef.Width.SHORT,
-                    "SSL Provider")
-            //TODO recommender(Recommenders.visibleIf(SSL_ENABLED_CONFIG, true))
+                    "SSL Provider",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true, Arrays.asList(SslProvider.values())))
             .define(
                     SSL_TRUSTSTORE_PATH_CONFIG,
                     ConfigDef.Type.STRING,
-                    "",
+                    null,
+                    new NullOrReadableFile(),
                     ConfigDef.Importance.MEDIUM,
                     SSL_TRUSTSTORE_PATH_DOC,
                     SSL_GROUP,
                     1,
                     ConfigDef.Width.SHORT,
-                    "SSL Truststore Path")
-            //TODO .validator(Validators.blankOr(ValidFile.of()))
-            //TODO .recommender(Recommenders.visibleIf(SSL_ENABLED_CONFIG, true))
+                    "SSL Truststore Path",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     SSL_TRUSTSTORE_PASSWORD_CONFIG,
                     ConfigDef.Type.PASSWORD,
-                    "password123",
+                    null,
                     ConfigDef.Importance.MEDIUM,
                     SSL_TRUSTSTORE_PASSWORD_DOC,
                     SSL_GROUP,
                     2,
                     ConfigDef.Width.SHORT,
-                    "SSL Truststore Password")
-            //TODO .validator(Validators.blankOr(ValidFile.of()))
-            //TODO .recommender(Recommenders.visibleIf(SSL_ENABLED_CONFIG, true))
+                    "SSL Truststore Password",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     SSL_KEYSTORE_PATH_CONFIG,
                     ConfigDef.Type.STRING,
-                    "",
+                    null,
+                    new NullOrReadableFile(),
                     ConfigDef.Importance.MEDIUM,
                     SSL_KEYSTORE_PATH_DOC,
                     SSL_GROUP,
                     3,
                     ConfigDef.Width.SHORT,
-                    "SSL Keystore Path")
+                    "SSL Keystore Path",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     SSL_KEYSTORE_PASSWORD_CONFIG,
                     ConfigDef.Type.PASSWORD,
-                    "password123",
+                    null,
                     ConfigDef.Importance.MEDIUM,
                     SSL_KEYSTORE_PASSWORD_DOC,
                     SSL_GROUP,
                     4,
                     ConfigDef.Width.SHORT,
-                    "SSL Keystore Password")
+                    "SSL Keystore Password",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     SSL_CIPHER_SUITES_CONFIG,
                     ConfigDef.Type.LIST,
@@ -453,37 +469,45 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     SSL_GROUP,
                     5,
                     ConfigDef.Width.LONG,
-                    "The cipher suites to enable")
+                    "The cipher suites to enable",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     SSL_OPENSLL_KEYCERTCHAIN_CONFIG,
                     ConfigDef.Type.STRING,
-                    "",
+                    null,
                     ConfigDef.Importance.HIGH,
                     SSL_OPENSLL_KEYCERTCHAIN_DOC,
                     SSL_GROUP,
                     6,
                     ConfigDef.Width.SHORT,
-                    "The path to the certificate chain file")
+                    "The path to the certificate chain file",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     SSL_OPENSLL_PRIVATEKEY_CONFIG,
                     ConfigDef.Type.STRING,
-                    "",
+                    null,
                     ConfigDef.Importance.HIGH,
                     SSL_OPENSLL_PRIVATEKEY_DOC,
                     SSL_GROUP,
                     7,
                     ConfigDef.Width.SHORT,
-                    "The path to the private key file")
+                    "The path to the private key file",
+                    Collections.singletonList(SSL_ENABLED_CONFIG),
+                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
                     CONSISTENCY_LEVEL_CONFIG,
                     ConfigDef.Type.STRING,
                     ConsistencyLevel.LOCAL_QUORUM.toString(),
+                    ValidEnum.of(ConsistencyLevel.class),
                     ConfigDef.Importance.HIGH,
                     CONSISTENCY_LEVEL_DOC,
                     WRITE_GROUP,
                     0,
                     ConfigDef.Width.SHORT,
-                    "Consistency Level")
+                    "Consistency Level",
+                    new ListRecommender(Arrays.asList(toStringArray(ConsistencyLevel.values()))))
             .define(
                     DELETES_ENABLE_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -523,8 +547,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     KEYSPACE_GROUP,
                     2,
                     ConfigDef.Width.SHORT,
-                    "Keyspace replication factor")
-            //TODO .recommender(Recommenders.visibleIf(KEYSPACE_CREATE_ENABLED_CONFIG, true))
+                    "Keyspace replication factor",
+                    Collections.singletonList(KEYSPACE_CREATE_ENABLED_CONFIG),
+                    new VisibleIfEqual(KEYSPACE_CREATE_ENABLED_CONFIG, true))
             .define(
                     TABLE_MANAGE_ENABLED_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -545,8 +570,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     TABLE_GROUP,
                     1,
                     ConfigDef.Width.SHORT,
-                    "Table Compression")
-            //TODO .recommender(Recommenders.visibleIf(TABLE_MANAGE_ENABLED_CONFIG, true))
+                    "Table Compression",
+                    Collections.singletonList(TABLE_MANAGE_ENABLED_CONFIG),
+                    new VisibleIfEqual(TABLE_MANAGE_ENABLED_CONFIG, true, Arrays.asList(TABLE_COMPRESSION.keySet().toArray(new String[0]))))
             .define(
                     OFFSET_STORAGE_TABLE_CONF,
                     ConfigDef.Type.STRING,
@@ -560,7 +586,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             .define(
                     EXECUTE_STATEMENT_TIMEOUT_MS_CONF,
                     ConfigDef.Type.LONG,
-                    30000,
+                    EXECUTE_STATEMENT_TIMEOUT_MS_DEFAULT,
                     ConfigDef.Range.atLeast(0),
                     ConfigDef.Importance.LOW,
                     EXECUTE_STATEMENT_TIMEOUT_MS_DOC,
@@ -570,7 +596,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     "Execute statement timeout (in ms)")
             .define(
                     TTL_CONFIG,
-                    ConfigDef.Type.STRING,
+                    ConfigDef.Type.INT,
                     TTL_DEFAULT,
                     ConfigDef.Importance.MEDIUM,
                     TTL_DOC,
@@ -592,15 +618,14 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     BEHAVIOR_ON_ERROR_CONFIG,
                     ConfigDef.Type.STRING,
                     BEHAVIOR_ON_ERROR_DEFAULT,
-                    ConfigDef.ValidString.in(BehaviorOnError.FAIL.name(),
-                            BehaviorOnError.LOG.name(), BehaviorOnError.IGNORE.name()),
+                    ConfigDef.ValidString.in(toStringArray(BehaviorOnError.values())),
                     ConfigDef.Importance.MEDIUM,
                     BEHAVIOR_ON_ERROR_DOC,
                     SCYLLADB_GROUP,
                     0,
                     ConfigDef.Width.NONE,
-                    BEHAVIOR_ON_ERROR_DISPLAY
-                    //Recommenders.enumValues(BehaviorOnError.class)
+                    BEHAVIOR_ON_ERROR_DISPLAY,
+                    new ListRecommender(Arrays.asList(toStringArray(BehaviorOnError.values())))
             );
   }
 
@@ -610,6 +635,10 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       return m.group(1);
     }
     throw new IllegalArgumentException("The setting: " + name + " does not match topic.keyspace.table nor topic.codec regular expression pattern");
+  }
+
+  private static String[] toStringArray(Object[] arr){
+    return Arrays.stream(arr).map(Object::toString).toArray(String[]::new);
   }
 
   /**
