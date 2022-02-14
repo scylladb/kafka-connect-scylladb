@@ -269,7 +269,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String TTL_CONFIG = "scylladb.ttl";
   /*If TTL value is not specified then skip setting ttl value while making insert query*/
-  public static final String TTL_DEFAULT = null;
+  public static final Integer TTL_DEFAULT = null;
   private static final String TTL_DOC = "The retention period for the data in ScyllaDB. "
           + "After this interval elapses, Scylladb will remove these records. "
           + "If this configuration is not provided, the Sink Connector will perform "
@@ -570,7 +570,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     "Execute statement timeout (in ms)")
             .define(
                     TTL_CONFIG,
-                    ConfigDef.Type.STRING,
+                    ConfigDef.Type.INT,
                     TTL_DEFAULT,
                     ConfigDef.Importance.MEDIUM,
                     TTL_DOC,
