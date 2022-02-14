@@ -59,8 +59,8 @@ public class ScyllaDbSinkTask extends SinkTask {
       if (!offsets.isEmpty()) {
         context.offset(offsets);
       }
-      topicOffsets = new HashMap<>();
     }
+    topicOffsets = new HashMap<>();
   }
 
   /*

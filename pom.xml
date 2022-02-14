@@ -23,7 +23,8 @@
         <license.current.year>2020</license.current.year>
         <kafka.connect.maven.plugin.version>0.11.1</kafka.connect.maven.plugin.version>
         <junit.surefire.plugin.version>1.2.0</junit.surefire.plugin.version>
-        <failsafe.version>2.21.0</failsafe.version>
+        <surefire.version>3.0.0-M5</surefire.version>
+        <failsafe.version>3.0.0-M5</failsafe.version>
         <kafka.version>2.4.0</kafka.version>
         <junit.version>5.2.0</junit.version>
         <scylladb.version>3.7.1-scylla-2</scylladb.version>
@@ -87,6 +88,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire.version}</version>
                 <configuration>
                     <excludedGroups>org.apache.kafka.test.IntegrationTest</excludedGroups>
                 </configuration>
@@ -95,21 +97,18 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <version>${failsafe.version}</version>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.junit.platform</groupId>
-                        <artifactId>junit-platform-surefire-provider</artifactId>
-                        <version>${junit.surefire.plugin.version}</version>
-                    </dependency>
-                </dependencies>
                 <configuration>
                     <skip>${skipIntegrationTests}</skip>
-                    <groups>org.apache.kafka.test.IntegrationTest</groups>
+                    <includes>**/*IT.java</includes>
+                    <systemPropertyVariables>
+                        <scylla.docker.hostname>${docker.host.address}</scylla.docker.hostname>
+                    </systemPropertyVariables>
                 </configuration>
                 <executions>
                     <execution>
                         <goals>
                             <goal>integration-test</goal>
+                            <goal>verify</goal>
                         </goals>
                     </execution>
                 </executions>
@@ -128,6 +127,51 @@
                         <phase>test</phase>
                         <goals>
                             <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.fabric8</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+                <version>0.39.0</version>
+
+                <configuration>
+                    <imagePullPolicy>Always</imagePullPolicy>
+                    <images>
+                        <image>
+                            <alias>composeImages</alias>
+                            <name>fabric8/compose-demo:latest</name>
+                            <external>
+                                <type>compose</type>
+                                <basedir>${basedir}</basedir>
+                                <composeFile>docker-compose.yml</composeFile>
+                            </external>
+                            <run>
+                                <wait>
+                                    <!-- Wait for Scylla and other containers to start up. -->
+                                    <log>init - serving</log>
+                                    <time>90000</time>
+                                </wait>
+                            </run>
+                        </image>
+                    </images>
+                </configuration>
+
+                <executions>
+                    <execution>
+                        <id>start</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>build</goal>
+                            <goal>start</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>stop</id>
+                        <phase>post-integration-test</phase>
+                        <goals>
+                            <goal>stop</goal>
                         </goals>
                     </execution>
                 </executions>

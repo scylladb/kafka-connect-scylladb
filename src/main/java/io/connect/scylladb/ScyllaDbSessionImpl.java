@@ -147,7 +147,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     Insert statement = QueryBuilder.insertInto(config.keyspace, tableName);
     TableMetadata.Table tableMetadata = tableMetadata(tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
-      statement.value(columnMetadata.getName(), QueryBuilder.bindMarker(columnMetadata.getName()));
+      statement.value(QueryBuilder.quote(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));
     }
     log.debug("insert() - Preparing statement. '{}'", statement);
     if (topicConfigs != null) {
