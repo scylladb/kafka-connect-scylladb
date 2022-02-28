@@ -138,7 +138,7 @@ public class ScyllaDbSinkConnectorIT {
     when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 3)));
     this.task.start(settings);
     List<SinkRecord> finalRecordsList = new ArrayList<>();
-    for (int i = 0; i< 10000; i++) {
+    for (int i = 0; i< 1000; i++) {
       List<SinkRecord> records = ImmutableList.of(
               write(
                       topic,
