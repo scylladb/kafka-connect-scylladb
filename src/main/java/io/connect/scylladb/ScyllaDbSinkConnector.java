@@ -152,7 +152,7 @@ public class ScyllaDbSinkConnector extends SinkConnector {
             }
           } else {
             // Check if keyspace exists:
-            if (session.keyspaceExists(config.keyspace)) {
+            if (!session.keyspaceExists(config.keyspace)) {
               keyspaceCreateConfig.addErrorMessage("Seems provided keyspace is not present. Did you mean to set "
                                                    + ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG
                                                    + " to true?");
