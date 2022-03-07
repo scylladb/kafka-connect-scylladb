@@ -137,7 +137,7 @@ public class ScyllaDbSessionFactory {
     clusterBuilder.withCompression(config.compression);
     Cluster cluster = clusterBuilder.build();
     log.info("Creating session");
-    final Session session = cluster.newSession();
+    final Session session = cluster.connect();
     return new ScyllaDbSessionImpl(config, cluster, session);
   }
 

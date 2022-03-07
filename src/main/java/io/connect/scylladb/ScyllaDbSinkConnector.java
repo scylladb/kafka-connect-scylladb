@@ -6,8 +6,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.datastax.driver.core.ResultSet;
 import io.connect.scylladb.utils.VersionUtil;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.Config;
+import org.apache.kafka.common.config.ConfigValue;
 import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkConnector;
@@ -103,5 +106,71 @@ public class ScyllaDbSinkConnector extends SinkConnector {
   @Override
   public String version() {
     return VersionUtil.getVersion();
+  }
+
+  @Override
+  public Config validate(Map<String, String> connectorConfigs){
+    // Do the usual validation, field by field.
+    Config result = super.validate(connectorConfigs);
+
+    ConfigValue userConfig = getConfigValue(result, ScyllaDbSinkConnectorConfig.USERNAME_CONFIG);
+    ConfigValue passwordConfig = getConfigValue(result, ScyllaDbSinkConnectorConfig.PASSWORD_CONFIG);
+    if (userConfig.value() == null && passwordConfig.value() != null) {
+      userConfig.addErrorMessage("Username not provided, even though password is.");
+    }
+    if (userConfig.value() != null && passwordConfig.value() == null) {
+      userConfig.addErrorMessage("Password not provided, even though username is.");
+    }
+
+    ConfigValue securityEnable = getConfigValue(result, ScyllaDbSinkConnectorConfig.SECURITY_ENABLE_CONFIG);
+    if (securityEnable.value().equals(true)) {
+      if (userConfig.value() == null) {
+        userConfig.addErrorMessage("Username is required with security enabled.");
+      }
+      if (passwordConfig.value() == null) {
+        passwordConfig.addErrorMessage("Password is required with security enabled.");
+      }
+    }
+
+    boolean hasErrors = result.configValues().stream().anyMatch(c -> !(c.errorMessages().isEmpty()) );
+    if (!hasErrors)
+    {
+      config = new ScyllaDbSinkConnectorConfig(connectorConfigs);
+      // Make trial connection
+      ScyllaDbSessionFactory sessionFactory = new ScyllaDbSessionFactory();
+      try (ScyllaDbSession session = sessionFactory.newSession(config)) {
+        if (!session.isValid()) {
+          ConfigValue contactPoints = getConfigValue(result, ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG);
+          contactPoints.addErrorMessage("Session is invalid.");
+        } else {
+          ConfigValue keyspaceCreateConfig = getConfigValue(result, ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG);
+          ConfigValue keyspaceConfig = getConfigValue(result, ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG);
+          if (config.keyspaceCreateEnabled) {
+            if (keyspaceConfig.value() == null) {
+              // This is possibly not needed, since keyspace should be always required non-null.
+              keyspaceConfig.addErrorMessage("Scylla keyspace name is required when keyspace creation is enabled.");
+            }
+          } else {
+            // Check if keyspace exists:
+            if (!session.keyspaceExists(config.keyspace)) {
+              keyspaceCreateConfig.addErrorMessage("Seems provided keyspace is not present. Did you mean to set "
+                                                   + ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG
+                                                   + " to true?");
+              keyspaceConfig.addErrorMessage("Keyspace " + config.keyspace + " not found.");
+            }
+          }
+        }
+      } catch (Exception ex) {
+        ConfigValue contactPoints = getConfigValue(result, ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG);
+        contactPoints.addErrorMessage("Failed to establish trial session: " + ex.getMessage());
+      }
+    }
+    return result;
+  }
+
+  private ConfigValue getConfigValue(Config config, String configName){
+    return config.configValues().stream()
+            .filter(value -> value.name().equals(configName) )
+            .findFirst().get();
   }
 }

@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import com.datastax.driver.core.BoundStatement;
+import com.datastax.driver.core.KeyspaceMetadata;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Statement;
@@ -30,6 +31,18 @@ public interface ScyllaDbSession extends Closeable {
      * Execute a query
      */
     ResultSet executeQuery(String query);
+
+    /**
+     * Lookup metadata for a keyspace.
+     * @param keyspaceName name of the keyspace
+     */
+    KeyspaceMetadata keyspaceMetadata(String keyspaceName);
+
+    /**
+     * Check if a keyspace exists.
+     * @param keyspaceName name of the keyspace
+     */
+    boolean keyspaceExists(String keyspaceName);
 
     /**
      * Lookup metadata for a table.
