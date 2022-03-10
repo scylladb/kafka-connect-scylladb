@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import com.datastax.driver.core.ResultSet;
 import io.connect.scylladb.utils.VersionUtil;
@@ -123,7 +124,7 @@ public class ScyllaDbSinkConnector extends SinkConnector {
     }
 
     ConfigValue securityEnable = getConfigValue(result, ScyllaDbSinkConnectorConfig.SECURITY_ENABLE_CONFIG);
-    if (securityEnable.value().equals(true)) {
+    if (Objects.equals(securityEnable.value(), true)) {
       if (userConfig.value() == null) {
         userConfig.addErrorMessage("Username is required with security enabled.");
       }
