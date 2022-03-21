@@ -7,8 +7,13 @@ import com.datastax.driver.core.RemoteEndpointAwareNettySSLOptions;
 import com.datastax.driver.core.SSLOptions;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
+import com.datastax.driver.extras.codecs.date.SimpleDateCodec;
+import io.connect.scylladb.codec.ConvenienceCodecs;
+import io.connect.scylladb.codec.StringDurationCodec;
+import io.connect.scylladb.codec.StringInetCodec;
 import io.connect.scylladb.codec.StringTimeUuidCodec;
 import io.connect.scylladb.codec.StringUuidCodec;
+import io.connect.scylladb.codec.StringVarintCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -41,6 +46,11 @@ public class ScyllaDbSessionFactory {
     // Register custom codec once at class loading time; duplicates will be logged via warning
     CODEC_REGISTRY.register(StringUuidCodec.INSTANCE);
     CODEC_REGISTRY.register(StringTimeUuidCodec.INSTANCE);
+    CODEC_REGISTRY.register(StringInetCodec.INSTANCE);
+    CODEC_REGISTRY.register(StringVarintCodec.INSTANCE);
+    CODEC_REGISTRY.register(StringDurationCodec.INSTANCE);
+    CODEC_REGISTRY.register(SimpleDateCodec.instance);
+    CODEC_REGISTRY.register(ConvenienceCodecs.ALL_INSTANCES);
   }
 
   public ScyllaDbSession newSession(ScyllaDbSinkConnectorConfig config) {

@@ -230,6 +230,12 @@
         </dependency>
 
         <dependency>
+            <groupId>com.scylladb</groupId>
+            <artifactId>scylla-driver-extras</artifactId>
+            <version>3.11.0.1</version>
+        </dependency>
+
+        <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-handler</artifactId>
             <version>${netty.version}</version>

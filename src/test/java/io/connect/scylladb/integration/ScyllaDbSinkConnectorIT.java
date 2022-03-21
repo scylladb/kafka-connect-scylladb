@@ -75,7 +75,7 @@ public class ScyllaDbSinkConnectorIT {
   @BeforeAll
   public static void setupKeyspace() throws InterruptedException {
     Properties systemProperties = System.getProperties();
-    SCYLLA_DB_CONTACT_POINT = systemProperties.getProperty("scylla.docker.hostname");
+    SCYLLA_DB_CONTACT_POINT = systemProperties.getProperty("scylla.docker.hostname", "localhost");
     Cluster.Builder builder = clusterBuilder();
     int attempts = 0;
     while (true) {
