@@ -2,10 +2,12 @@ package io.connect.scylladb;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.CodecRegistry;
+import com.datastax.driver.core.KeyspaceMetadata;
 import com.datastax.driver.core.ProtocolVersion;
 import com.datastax.driver.core.RemoteEndpointAwareNettySSLOptions;
 import com.datastax.driver.core.SSLOptions;
 import com.datastax.driver.core.Session;
+import com.datastax.driver.core.UserType;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
 import com.datastax.driver.extras.codecs.date.SimpleDateCodec;
 import io.connect.scylladb.codec.ConvenienceCodecs;
@@ -14,6 +16,7 @@ import io.connect.scylladb.codec.StringInetCodec;
 import io.connect.scylladb.codec.StringTimeUuidCodec;
 import io.connect.scylladb.codec.StringUuidCodec;
 import io.connect.scylladb.codec.StringVarintCodec;
+import io.connect.scylladb.codec.StructUDTCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -36,6 +39,8 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.util.Collection;
+import java.util.List;
 
 public class ScyllaDbSessionFactory {
 
@@ -148,6 +153,17 @@ public class ScyllaDbSessionFactory {
     Cluster cluster = clusterBuilder.build();
     log.info("Creating session");
     final Session session = cluster.connect();
+    KeyspaceMetadata ks = session.getCluster().getMetadata().getKeyspace(config.keyspace);
+    if(ks != null) {
+      Collection<UserType> userTypes = ks.getUserTypes();
+      userTypes.stream().forEach(t -> {
+        CODEC_REGISTRY.register(new StructUDTCodec(CODEC_REGISTRY, t));
+      });
+    }
+    else{
+      log.warn("Received null cluster metadata. Unable to register KafkaStruct to UserType codecs if any exist.");
+    }
+
     return new ScyllaDbSessionImpl(config, cluster, session);
   }
 

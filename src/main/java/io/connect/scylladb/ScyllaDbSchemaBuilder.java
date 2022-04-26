@@ -125,6 +125,14 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
         case STRING:
           dataType = DataType.varchar();
           break;
+        case STRUCT:
+          dataType = session.keyspaceMetadata(config.keyspace).getUserType(schema.name());
+          if (dataType == null){
+            throw new DataException(
+                    String.format("Couldn't find user type %s in keyspace %s", schema.name(), config.keyspace)
+            );
+          }
+          break;
         default:
           throw new DataException(
               String.format("Unsupported type %s", schema.type())

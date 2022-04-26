@@ -78,3 +78,19 @@ Reporting Kafka Metrics
 
 Refer the following [confluent documentation](https://docs.confluent.io/current/kafka/metrics-reporter.html)
 to access kafka related metrics.
+
+-----------------------
+Supported Data Types
+-----------------------
+Currently supported native database types are: ASCII, BIGINT, BLOB, BOOLEAN, DATE, DECIMAL, DOUBLE, 
+DURATION, FLOAT, INET, INT, SMALLINT, TEXT, TIME, TIMESTAMP, TIMEUUID, TINYINT, UUID, VARCHAR, VARINT.
+
+COUNTERs are not supported.
+
+Collections, UDTs and Tuples are supported, although UDTs require proper setup.
+To ensure connector knows how to handle User Types it is necessary that they are already defined in 
+target keyspace when connector starts.
+
+Best way to ensure conformity with specific table schema is to create table beforehand and use 
+connector with `TABLE_MANAGE_ENABLED_CONFIG` set to `false`. Connector will try to reasonably 
+convert most of the types (e.g. IP address provided as text string should be possible to insert into INET column).
