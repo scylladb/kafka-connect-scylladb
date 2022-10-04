@@ -55,7 +55,7 @@ public class ScyllaDbSessionFactory {
 
   public ScyllaDbSession newSession(ScyllaDbSinkConnectorConfig config) {
     Cluster.Builder clusterBuilder = Cluster.builder()
-        .withProtocolVersion(ProtocolVersion.NEWEST_SUPPORTED)
+        .withProtocolVersion(ProtocolVersion.DEFAULT)
         .withCodecRegistry(CODEC_REGISTRY);
 
     try {

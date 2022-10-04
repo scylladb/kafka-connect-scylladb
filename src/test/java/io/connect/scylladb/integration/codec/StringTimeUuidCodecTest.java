@@ -79,13 +79,13 @@ class StringTimeUuidCodecTest {
   @Test
   public void shouldFailToSerializeNonUuidString() {
     Assertions.assertThrows(InvalidTypeException.class, () -> {
-      codec.serialize(NON_UUID_STR, ProtocolVersion.NEWEST_SUPPORTED);
+      codec.serialize(NON_UUID_STR, ProtocolVersion.DEFAULT);
     });
   }
 
   protected void assertSerializeAndDeserialize(String uuidStr) {
-    ByteBuffer buffer = codec.serialize(uuidStr, ProtocolVersion.NEWEST_SUPPORTED);
-    String deserialized = codec.deserialize(buffer, ProtocolVersion.NEWEST_SUPPORTED);
+    ByteBuffer buffer = codec.serialize(uuidStr, ProtocolVersion.DEFAULT);
+    String deserialized = codec.deserialize(buffer, ProtocolVersion.DEFAULT);
     assertEquals(uuidStr, deserialized);
   }
 }
