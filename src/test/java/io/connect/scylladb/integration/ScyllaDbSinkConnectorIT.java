@@ -58,7 +58,7 @@ public class ScyllaDbSinkConnectorIT {
     Cluster.Builder clusterBuilder = Cluster.builder()
             .withPort(SCYLLA_DB_PORT)
             .addContactPoints(SCYLLA_DB_CONTACT_POINT)
-            .withProtocolVersion(ProtocolVersion.NEWEST_SUPPORTED);
+            .withProtocolVersion(ProtocolVersion.DEFAULT);
     return clusterBuilder;
   }
 
