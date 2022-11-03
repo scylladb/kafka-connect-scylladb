@@ -31,6 +31,10 @@
         <netty.version>4.1.77.Final</netty.version>
         <netty-tcnative.version>2.0.7.Final</netty-tcnative.version>
         <skipIntegrationTests>false</skipIntegrationTests>
+        <!-- transitive dependency versions -->
+        <jackson-databind.version>2.13.4.2</jackson-databind.version>
+        <guava.version>24.1.1-jre</guava.version>
+
     </properties>
 
     <build>
@@ -185,6 +189,21 @@
             </resource>
         </resources>
     </build>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson-databind.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
 
