@@ -63,6 +63,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final List<String> cipherSuites;
   public final File certFilePath;
   public final File privateKeyPath;
+  public final boolean requestCommitAfterEveryInsert;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
@@ -160,6 +161,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       TopicConfigs topicConfigs = new TopicConfigs(topicWiseConfig.getValue(), this);
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
+
+    this.requestCommitAfterEveryInsert = getBoolean(OFFSET_COMMIT_AFTER_EVERY_INSERT);
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
@@ -302,6 +305,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Logs the error via connect-reporter when an error occurs while processing or "
           + "inserting records into ScyllDB and continues to process next set of records, "
           + "available in the kafka topics.";
+
+  public static final String OFFSET_COMMIT_AFTER_EVERY_INSERT = "offset.commit.after.every.insert";
+  public static final boolean OFFSET_COMMIT_AFTER_EVERY_INSERT_DEFAULT = false;
+  public static final String OFFSET_COMMIT_AFTER_EVERY_INSERT_DOC = "Configure code to request Kafka Offset Commit " 
+          + "After every batch of insertion to Scylla. This will mean less repeated inserts after recovery " 
+          + "but will increase load on Kafka cluster. If set to false, Kafka Connect will commit offsets "
+          + "periodically instead.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -626,6 +636,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.NONE,
                     BEHAVIOR_ON_ERROR_DISPLAY,
                     new ListRecommender(Arrays.asList(toStringArray(BehaviorOnError.values())))
+            )
+            .define(
+                OFFSET_COMMIT_AFTER_EVERY_INSERT,
+                ConfigDef.Type.BOOLEAN,
+                OFFSET_COMMIT_AFTER_EVERY_INSERT_DEFAULT,
+                ConfigDef.Importance.MEDIUM,
+                OFFSET_COMMIT_AFTER_EVERY_INSERT_DOC,
+                WRITE_GROUP,
+                5,
+                ConfigDef.Width.SHORT,
+                "Request Kafka Offset Commit after every Scylla Write"
             );
   }
 

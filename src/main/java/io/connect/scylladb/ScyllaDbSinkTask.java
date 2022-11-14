@@ -128,7 +128,9 @@ public class ScyllaDbSinkTask extends SinkTask {
           ResultSet resultSet =
                   future.getUninterruptibly(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
         }
-        context.requestCommit();
+        if(config.requestCommitAfterEveryInsert) {
+          context.requestCommit();
+        }
         // TODO : Log the records that fail in Queue/Kafka Topic.
       } catch (TransportException ex) {
         log.debug("put() - Setting clusterValid = false", ex);
