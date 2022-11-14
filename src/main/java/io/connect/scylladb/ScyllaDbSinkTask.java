@@ -80,7 +80,7 @@ public class ScyllaDbSinkTask extends SinkTask {
     
     if (!session.isValid()) {
       log.warn("ScyllaDb Session is invalid. Closing and creating new.");
-      close();
+      closeScyllaSession();
       session = sessionFactory.newSession(this.config);
     }
     return session;
@@ -157,7 +157,7 @@ public class ScyllaDbSinkTask extends SinkTask {
   ) {
     if (config.isOffsetEnabledInScyllaDb()) {
       try {
-        log.debug("flush() - Flushing offsets to {}", this.config.offsetStorageTable);
+        log.debug("preCommit() - Flushing offsets to {}", this.config.offsetStorageTable);
         List<ResultSetFuture> insertFutures = currentOffsets.entrySet().stream()
           .map(e -> this.getValidSession().getInsertOffsetStatement(e.getKey(), e.getValue()))
           .map(s -> getValidSession().executeStatementAsync(s))
@@ -205,16 +205,7 @@ public class ScyllaDbSinkTask extends SinkTask {
             new OffsetAndMetadata(record.kafkaOffset() + 1));
   }
 
-  /**
-   * Closes the ScyllaDB session and proceeds to closing sink task.
-   */
-  @Override
-  public void stop() {
-    close();
-  }
-  
-  // Visible for testing
-  void close() {
+  private void closeScyllaSession() {
     if (null != this.session) {
       log.info("Closing getValidSession");
       try {
@@ -223,6 +214,27 @@ public class ScyllaDbSinkTask extends SinkTask {
         log.error("Exception thrown while closing ScyllaDB session.", ex);
       }
       this.session = null;
+    }
+  }
+
+  /**
+   * Closes the ScyllaDB session. In SinkTasks, this method is invoked only once outstanding calls to other
+     * methods have completed (e.g., {@link #put(Collection)} has returned) and a final {@link #flush(Map)} and offset
+     * commit has completed. Implementations of this method should only need to perform final cleanup operations, such
+     * as closing network connections to the sink system.
+   */
+  @Override
+  public void stop() {
+    closeScyllaSession();
+
+  }
+  
+  @Override
+  public void close(Collection<TopicPartition> partitions) {
+    // Remove any partitions we no longer will be processing,
+    // or we'll see lot's and lot's of warning log entries about unassigned offset commits
+    for (TopicPartition partition: partitions) {
+      topicOffsets.remove(partition);
     }
   }
 
