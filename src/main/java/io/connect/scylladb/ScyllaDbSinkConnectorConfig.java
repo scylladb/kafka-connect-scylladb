@@ -163,11 +163,11 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   }
 
   public static final String PORT_CONFIG = "scylladb.port";
-  private static final String PORT_DOC = "The port the Scylladb hosts are listening on. "
+  private static final String PORT_DOC = "The port the ScyllaDB hosts are listening on. "
           + "Eg. When using a docker image, connect to the port it uses(use docker ps)";
 
   public static final String CONTACT_POINTS_CONFIG = "scylladb.contact.points";
-  static final String CONTACT_POINTS_DOC = "The Scylladb hosts to connect to. "
+  static final String CONTACT_POINTS_DOC = "The ScyllaDB hosts to connect to. "
           + "Scylla nodes use this list of hosts to find each other and learn "
           + "the topology of the ring. You must change this if you are running "
           + "multiple nodes. It's essential to put at least 2 hosts in case of "
@@ -190,7 +190,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "QUORUM, ALL, LOCAL_QUORUM, EACH_QUORUM, SERIAL, LOCAL_SERIAL, LOCAL_ONE.";
 
   public static final String SSL_ENABLED_CONFIG = "scylladb.ssl.enabled";
-  private static final String SSL_ENABLED_DOC = "Flag to determine if SSL is enabled when connecting to Scylladb.";
+  private static final String SSL_ENABLED_DOC = "Flag to determine if SSL is enabled when connecting to ScyllaDB.";
 
   public static final String SSL_PROVIDER_CONFIG = "scylladb.ssl.provider";
   private static final String SSL_PROVIDER_DOC = "The SSL Provider to use when connecting to ScyllaDB. "
@@ -238,14 +238,14 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Valid Values are NONE, SNAPPY, LZ4, DEFLATE.";
 
   public static final String OFFSET_STORAGE_TABLE_CONF = "scylladb.offset.storage.table";
-  private static final String OFFSET_STORAGE_TABLE_DOC = "The table within the Scylladb keyspace "
+  private static final String OFFSET_STORAGE_TABLE_DOC = "The table within the ScyllaDB keyspace "
           + "to store the offsets that have been read from Kafka.";
 
   public static final String ENABLE_OFFSET_STORAGE_TABLE = "scylladb.offset.storage.table.enable";
   private static final Boolean ENABLE_OFFSET_STORAGE_TABLE_DEFAULT = true;
   private static final String ENABLE_OFFSET_STORAGE_TABLE_DOC = "If true, Kafka consumer offsets will "
-          + "be stored in Scylladb table. If false, connector will skip writing offset information into "
-          + "Scylladb.";
+          + "be stored in ScyllaDB table. If false, connector will skip writing offset information into "
+          + "ScyllaDB.";
 
   public static final String EXECUTE_STATEMENT_TIMEOUT_MS_CONF = "scylladb.execute.timeout.ms";
   public static final Long EXECUTE_STATEMENT_TIMEOUT_MS_DEFAULT = 30000L;
@@ -277,7 +277,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   /*If TTL value is not specified then skip setting ttl value while making insert query*/
   public static final Integer TTL_DEFAULT = null;
   private static final String TTL_DOC = "The retention period for the data in ScyllaDB. "
-          + "After this interval elapses, Scylladb will remove these records. "
+          + "After this interval elapses, ScyllaDB will remove these records. "
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
 
@@ -294,13 +294,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Must be configured to one of the following:\n"
           + "``fail``\n"
           + "The Connector throws ConnectException and stops processing records "
-          + "when an error occurs while processing or inserting records into ScyllDB.\n"
+          + "when an error occurs while processing or inserting records into ScyllaDB.\n"
           + "``ignore``\n"
           + "Continues to process next set of records "
-          + "when error occurs while processing or inserting records into ScyllDB.\n"
+          + "when error occurs while processing or inserting records into ScyllaDB.\n"
           + "``log``\n"
           + "Logs the error via connect-reporter when an error occurs while processing or "
-          + "inserting records into ScyllDB and continues to process next set of records, "
+          + "inserting records into ScyllaDB and continues to process next set of records, "
           + "available in the kafka topics.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";

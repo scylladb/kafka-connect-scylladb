@@ -28,7 +28,7 @@ The ScyllaDB Sink Connector accepts two data formats from kafka. They are:
 This connector uses the topic name to determine the name of the table to write to. You can change this dynamically by using a
 transform like [Regex Router](<https://kafka.apache.org/documentation/#connect_transforms>) to change the topic name.
 
-To run this connector you can you a dockerised ScyllaDB instance. Follow this [link](https://hub.docker.com/r/scylladb/scylla/) for use.
+To run this connector you can you a dockerized ScyllaDB instance. Follow this [link](https://hub.docker.com/r/scylladb/scylla/) for use.
 
 
 -----------------

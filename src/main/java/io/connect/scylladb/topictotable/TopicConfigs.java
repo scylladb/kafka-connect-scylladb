@@ -63,7 +63,7 @@ public class TopicConfigs {
       }
     } catch (NumberFormatException e) {
       throw new DataException(
-              String.format("The setting ttlSeconds must be of type Integer. %s is not a suppoerted type",
+              String.format("The setting ttlSeconds must be of type Integer. %s is not a supported type",
                       configsMapForTheTopic.get("ttlSeconds").getClass().getName()));
     } catch (IllegalArgumentException e) {
       throw  new DataException(
