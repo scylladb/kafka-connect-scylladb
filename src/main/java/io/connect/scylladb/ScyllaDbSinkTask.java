@@ -176,14 +176,7 @@ public class ScyllaDbSinkTask extends SinkTask {
         throw new RetriableException(ex);
       }
     }
-    if (!topicOffsets.isEmpty()) {
-      return topicOffsets;
-    } else {
-      /*
-       * In case when @put is empty, returning the same offsets
-       */
-      return currentOffsets;
-    }
+    return currentOffsets;
   }
 
   /**
