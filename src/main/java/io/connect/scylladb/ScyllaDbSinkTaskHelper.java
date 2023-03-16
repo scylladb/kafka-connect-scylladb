@@ -96,8 +96,9 @@ public class ScyllaDbSinkTaskHelper {
     } else {
       boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
       // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
-      // while Scylla expects a microsecond precision: 1 ms = 1000 us.
-      boundStatement.setDefaultTimestamp(record.timestamp() * 1000);
+      // while Scylla expects a microsecond precision: 1 ms = 1000 µs.
+      // + to avoid clashes of subsequent writes having the same record timestamp, the offset mod 1000 is added as [µs].
+      boundStatement.setDefaultTimestamp(record.timestamp() * 1000 + record.kafkaOffset() % 1000);
     }
     return boundStatement;
   }
