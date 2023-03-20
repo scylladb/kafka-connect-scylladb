@@ -79,6 +79,7 @@ public class ScyllaNativeTypesIT {
             .put(ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG, SCYLLA_DB_CONTACT_POINT)
             .put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, String.valueOf(SCYLLA_DB_PORT))
             .put(ScyllaDbSinkConnectorConfig.KEYSPACE_REPLICATION_FACTOR_CONFIG, "1")
+            .put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_INSERT, "true")
             .build());
 
     @BeforeAll

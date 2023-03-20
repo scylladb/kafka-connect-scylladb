@@ -69,6 +69,7 @@ public class ScyllaDbSinkConnectorIT {
     result.put(ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG, SCYLLA_DB_CONTACT_POINT);
     result.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, String.valueOf(SCYLLA_DB_PORT));
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_REPLICATION_FACTOR_CONFIG, "1");
+    result.put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_INSERT, "true");
     return result;
   }
 
@@ -180,6 +181,61 @@ public class ScyllaDbSinkConnectorIT {
     verify(this.sinkTaskContext, times(1)).requestCommit();
     verify(this.sinkTaskContext, times(1)).assignment();
   }
+
+  @Test
+  public void insertWithoutRequestCommit() {
+    final Map<String, String> settings = settings();
+    settings.put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_INSERT, "false");
+    connector = new ScyllaDbSinkConnector();
+    connector.start(settings);
+    final String topic = "insertTestingWORC";
+    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 3)));
+    this.task.start(settings);
+    List<SinkRecord> finalRecordsList = new ArrayList<>();
+    for (int i = 0; i< 1000; i++) {
+      List<SinkRecord> records = ImmutableList.of(
+              write(
+                      topic,
+                      struct("key",
+                              "id", Schema.Type.INT64, true, 12345L+ i
+                      ), struct("key",
+                              "id", Schema.Type.INT64, true, 12345L + i,
+                              "firstName", Schema.Type.STRING, true, "test",
+                              "lastName", Schema.Type.STRING, true, "user",
+                              "age", Schema.Type.INT64, true, 1234L + i
+                      )
+              ),
+              write(topic,
+                      null,
+                      asMap(
+                              struct("key",
+                                      "id", Schema.Type.INT64, true, 67890L + i
+                              )
+                      ),
+                      null,
+                      asMap(
+                              struct("key",
+                                      "id", Schema.Type.INT64, true, 67890L + i,
+                                      "firstName", Schema.Type.STRING, true, "another",
+                                      "lastName", Schema.Type.STRING, true, "user",
+                                      "age", Schema.Type.INT64, true, 10L + i
+                              )
+                      )
+              )
+      );
+      finalRecordsList.addAll(records);
+    }
+    this.validations = finalRecordsList.stream()
+            .map(RowValidator::of)
+            .collect(Collectors.toList());
+    this.task.put(finalRecordsList);
+    Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
+    assertEquals(true, tableExists);
+    verify(this.sinkTaskContext, times(0)).requestCommit();
+    verify(this.sinkTaskContext, times(1)).assignment();
+  }
+
+
 
   @Test
   @Disabled
