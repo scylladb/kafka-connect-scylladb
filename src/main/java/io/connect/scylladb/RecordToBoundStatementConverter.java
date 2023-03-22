@@ -1,8 +1,11 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.BoundStatement;
-import com.datastax.driver.core.LocalDate;
-import com.datastax.driver.core.PreparedStatement;
+import com.datastax.driver.core.*;
+import com.datastax.driver.core.exceptions.CodecNotFoundException;
+import com.datastax.driver.core.schemabuilder.UDTType;
+import io.connect.scylladb.codec.ListTupleCodec;
+import io.connect.scylladb.codec.MapUDTCodec;
+import io.connect.scylladb.codec.StructTupleCodec;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
@@ -158,7 +161,25 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Struct value
   ) {
-    throw new UnsupportedOperationException();
+    DataType colType = preparedStatement.getVariables().getType(fieldName);
+    switch (colType.getName()){
+      case TUPLE:
+        TypeCodec<Struct> codec;
+        try{
+          codec = preparedStatement.getCodecRegistry().codecFor(colType, Struct.class);
+        } catch (CodecNotFoundException e) {
+          preparedStatement.getCodecRegistry().register(new StructTupleCodec(preparedStatement.getCodecRegistry(), (TupleType) colType));
+          codec = preparedStatement.getCodecRegistry().codecFor(colType, Struct.class);
+        }
+        state.statement.set(fieldName, value, codec);
+        break;
+      case UDT:
+        state.statement.set(fieldName, value, preparedStatement.getCodecRegistry().codecFor(preparedStatement.getVariables().getType(fieldName), value));
+        break;
+      default:
+        throw new UnsupportedOperationException("No behavior implemented for inserting Kafka Struct into " + colType.getName());
+    }
+    state.parameters++;
   }
 
   protected void setArray(
@@ -167,7 +188,21 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       Schema schema,
       List value
   ) {
-    state.statement.setList(fieldName, value);
+    DataType colType = preparedStatement.getVariables().getType(fieldName);
+    switch (colType.getName()){
+      case TUPLE:
+        TypeCodec<List> codec;
+        try{
+          codec = preparedStatement.getCodecRegistry().codecFor(colType, List.class);
+        } catch (CodecNotFoundException e) {
+          preparedStatement.getCodecRegistry().register(new ListTupleCodec(preparedStatement.getCodecRegistry(), (TupleType) colType));
+          codec = preparedStatement.getCodecRegistry().codecFor(colType, List.class);
+        }
+        state.statement.set(fieldName, value, codec);
+        break;
+      default:
+        state.statement.setList(fieldName, value);
+    }
     state.parameters++;
   }
 
@@ -177,7 +212,24 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       Schema schema,
       Map value
   ) {
-    state.statement.setMap(fieldName, value);
+    DataType colType = preparedStatement.getVariables().getType(fieldName);
+    switch (colType.getName()){
+      case UDT:
+        TypeCodec<Map> codec;
+        try{
+          codec = preparedStatement.getCodecRegistry().codecFor(colType, Map.class);
+        } catch (CodecNotFoundException e) {
+          preparedStatement.getCodecRegistry().register(new MapUDTCodec(preparedStatement.getCodecRegistry(), (UserType) colType));
+          codec = preparedStatement.getCodecRegistry().codecFor(colType, Map.class);
+        }
+        state.statement.set(fieldName, value, codec);
+        break;
+      case MAP:
+        state.statement.setMap(fieldName, value);
+        break;
+      default:
+        throw new UnsupportedOperationException("No behavior implemented for inserting Java Map into " + colType.getName());
+    }
     state.parameters++;
   }
 
