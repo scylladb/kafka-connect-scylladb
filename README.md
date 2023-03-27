@@ -41,6 +41,9 @@ generate a primary key for the table when it is created. These fields must also 
 written to the table is always read from the value from Apache Kafka. This connector uses the topic to determine the name of
 the table to write to. This can be changed on the fly by using a transform to change the topic name.
 
+Note that when schema management is enabled, Invalid kafka topic names will be rewritten to valid Scylla table names. Specifically,
+"." and "-" in topic names will be replaced with "_".
+
 --------------------------
 Time To Live (TTL) Support
 --------------------------
