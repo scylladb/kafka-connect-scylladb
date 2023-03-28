@@ -179,12 +179,14 @@ can be forced by using double-quotes ("myTable" is different from mytable).
 ### Topic to Table
 
 These configurations can be specified for multiple Kafka topics from which records are being processed. 
-Also, these topic level configurations will be override the behavior of Connector level configurations such as 
+Also, these topic level configurations will override the behavior of Connector level configurations such as 
 ``scylladb.consistency.level``, ``scylladb.deletes.enabled`` and ``scylladb.ttl``
 
-``topic.my_topic.my_ks.my_table.mapping``
+``topic.<my_topic>.<my_ks>.<my_table>.mapping``
 
   For mapping topic and fields from Kafka record's key, value and headers to ScyllaDB table and its columns.
+ `my_topic` should refer to the topic name as seen in a SinkRecord passed to the Connector - which means after all Single Message Transforms.   
+  For example if you're using RegexRouter to change the topic name from `top1` to `top2` you would use `topic.top2.ks.table.mapping=...` property.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
   In the Kafka topic mapping, you can optionally specify which column should be used as the ttl (time-to-live) and 
