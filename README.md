@@ -51,15 +51,20 @@ To use this feature you have to set ``scylladb.ttl`` config with time(in seconds
 --------------------------------
 Offset tracking Support in Kafka
 --------------------------------
-This connector support two types of offset tracking support.
+This connector supports two types of offset tracking, but always stores them at least on Kafka.
+They will appear in internal ``__consumer_offsets`` topic and can be tracked by checking connector's consumer group
+using `kafka-consumer-groups` tool.
 
 **Offset stored in ScyllaDB Table**
 
-This is the default behaviour of the connector. Here, the offset is stored in the ScyllaDB table.
+This is the default behaviour of the connector. The offsets will be additionally stored in table defined by `scylladb.offset.storage.table` property.
+Useful when all offsets need to be accessible in Scylla.
 
 **Offset stored in Kafka**
 
-If you want that offset should be managed in kafka then you must specify ``scylladb.offset.storage.table.enable=false``. By default, this property is true (in this case offset will be stored in the ScyllaDB table).
+For offsets to be managed only on Kafka, you must specify `scylladb.offset.storage.table.enable=false`.  
+This will result in less total writes. Recommended option.
+
 
 -------------------
 Delivery guarantees

@@ -249,7 +249,7 @@ Also, these topic level configurations will be override the behavior of Connecto
 
 ``scylladb.offset.storage.table.enable``
 
-  If true, Kafka consumer offsets will be stored in ScyllaDB table. If false, connector will skip writing offset 
+  If true, Kafka consumer offsets will be additionally stored in ScyllaDB table. If false, connector will skip writing offset
   information into ScyllaDB.
 
   * Type: Boolean
