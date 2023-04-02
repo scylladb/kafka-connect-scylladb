@@ -51,10 +51,10 @@ Note: To run Integration Tests there is no need to run Confluent. Use docker-com
 ``docker-compose -f docker-compose.yml up``
 
 After completion of the above steps, a folder by the name of ‘components’ will be created in the target folder of the source code folder.
-The Connector jar files are present in ``{source-code-folder}/target/components/packages/[jar-files]``
+The Connector's full package is present in ``{source-code-folder}/target/components/packages/ScyllaDB-kafka-connect-scylladb-<version>``
 
-Create a folder by the name of ScyllaDB-Sink-Connector and copy the jar files in it.
-Navigate to your Confluent Platform installation directory and place this folder in {confluent-directory}/share/java.
+Navigate to your Confluent Platform installation directory and place this folder in `{confluent-directory}/share/java`.  
+In case of different Kafka Connect installations you can modify `plugin.path` property so that it includes Connector's package folder.
 
 ## Sink Connector
 
