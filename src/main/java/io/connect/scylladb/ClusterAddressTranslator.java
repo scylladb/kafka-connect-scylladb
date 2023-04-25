@@ -31,7 +31,10 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import org.json.*;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,29 +47,13 @@ class ClusterAddressTranslator implements AddressTranslator {
     public void init(Cluster cluster) {
     }
 
-    public void setMap(String addressMapString) {
-        JSONObject jsonmap;
-
-        if (addressMapString.charAt(0) == '[') {
-            JSONArray jsonarray = new JSONArray(addressMapString);
-            log.trace("Address translation map: " + jsonarray.toString());
-            Iterator jai = jsonarray.iterator();
-
-            while (jai.hasNext()) {
-                JSONObject element = (JSONObject) jai.next();
-                Iterator subpart = element.keys();
-                String internal = (String) subpart.next();
-                String external = element.getString(internal);
-                addAddresses(internal, external);
-            }
-        } else {
-            jsonmap = new JSONObject(addressMapString);
-            Iterator keys = jsonmap.keys();
-            while (keys.hasNext()) {
-                String internal = (String) keys.next();
-                String external = (String) jsonmap.getString(internal);
-                addAddresses(internal, external);
-            }
+    public void setMap(String addressMapString) throws JsonProcessingException {
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode jsonNode = objectMapper.readTree(addressMapString);
+        Iterator<Map.Entry<String, JsonNode>> entries = jsonNode.fields();
+        while(entries.hasNext()) {
+            Map.Entry<String, JsonNode> entry = entries.next();
+            addAddresses(entry.getKey(), entry.getValue().asText());
         }
     }
 

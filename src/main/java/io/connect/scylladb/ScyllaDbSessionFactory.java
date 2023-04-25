@@ -8,6 +8,7 @@ import com.datastax.driver.core.SSLOptions;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
 import com.datastax.driver.extras.codecs.date.SimpleDateCodec;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import io.connect.scylladb.codec.ConvenienceCodecs;
 import io.connect.scylladb.codec.StringDurationCodec;
 import io.connect.scylladb.codec.StringInetCodec;
@@ -17,8 +18,6 @@ import io.connect.scylladb.codec.StringVarintCodec;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.apache.kafka.connect.errors.ConnectException;
-import org.json.JSONObject;
-import org.json.JSONException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,7 +59,7 @@ public class ScyllaDbSessionFactory {
 
     try {
       configureAddressTranslator(config, clusterBuilder);
-    } catch (JSONException e) {
+    } catch (JsonProcessingException e) {
       log.info("Failed to configure address translator, provide a valid JSON string " +
               "with external network address and port mapped to private network " +
               "address and port.");
@@ -158,9 +157,8 @@ public class ScyllaDbSessionFactory {
             .addContactPoints(contactPointsArray);
   }
 
-  private void configureAddressTranslator(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) {
+  private void configureAddressTranslator(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) throws JsonProcessingException {
     log.info("Trying to configure address translator for private network address and port.");
-    new JSONObject(config.contactPoints);
     ClusterAddressTranslator translator = new ClusterAddressTranslator();
     translator.setMap(config.contactPoints);
     clusterBuilder.addContactPointsWithPorts(translator.getContactPoints())
