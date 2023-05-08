@@ -1,31 +1,61 @@
 package io.connect.scylladb.codec;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.TypeCodec;
-import com.datastax.driver.core.exceptions.InvalidTypeException;
+import com.datastax.oss.driver.api.core.ProtocolVersion;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
+import com.datastax.oss.driver.api.core.type.codec.TypeCodecs;
+import com.datastax.oss.driver.api.core.type.reflect.GenericType;
+import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.Nullable;
 
+import java.nio.ByteBuffer;
 import java.util.UUID;
 
-/**
- * A {@link TypeCodec} that converts from {@link DataType#timeuuid()} to {@link String}.
- */
-public class StringTimeUuidCodec extends StringUuidCodec {
-
-  /**
-   * A shared immutable instance.
-   */
+public class StringTimeUuidCodec implements TypeCodec<String> {
   public static final StringTimeUuidCodec INSTANCE = new StringTimeUuidCodec();
 
-  public StringTimeUuidCodec() {
-    super(DataType.timeuuid(), timeUUID());
+  @NonNull
+  @Override
+  public GenericType<String> getJavaType() {
+    return GenericType.STRING;
   }
 
+  @NonNull
   @Override
-  protected UUID parseAsUuid(String value) {
-    UUID uuid = super.parseAsUuid(value);
-    if (uuid != null && uuid.version() != 1) {
-      throw new InvalidTypeException(String.format("%s is not a Type 1 (time-based) UUID", value));
+  public DataType getCqlType() {
+    return DataTypes.TIMEUUID;
+  }
+
+  @Nullable
+  @Override
+  public ByteBuffer encode(@Nullable String value, @NonNull ProtocolVersion protocolVersion) {
+    UUID uuid = TypeCodecs.TIMEUUID.parse(value);
+    return uuid == null ? null : TypeCodecs.TIMEUUID.encode(uuid, protocolVersion);
+  }
+
+  @Nullable
+  @Override
+  public String decode(@Nullable ByteBuffer bytes, @NonNull ProtocolVersion protocolVersion) {
+    UUID uuid = TypeCodecs.TIMEUUID.decode(bytes, protocolVersion);
+    return uuid == null ? null : uuid.toString();
+  }
+
+  @NonNull
+  @Override
+  public String format(@Nullable String value) {
+    return value == null ? "NULL" : value;
+  }
+
+  @Nullable
+  @Override
+  public String parse(@Nullable String value) {
+    try {
+      UUID uuid = TypeCodecs.TIMEUUID.parse(value);
+      return uuid != null ? uuid.toString() : null;
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(String.format("Cannot parse string TIMEUUID value from \"%s\"", value), e);
     }
-    return uuid;
+
   }
 }

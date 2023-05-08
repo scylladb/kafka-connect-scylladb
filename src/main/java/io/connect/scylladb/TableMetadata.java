@@ -1,6 +1,6 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.DataType;
+import com.datastax.oss.driver.api.core.type.DataType;
 
 import java.util.List;
 

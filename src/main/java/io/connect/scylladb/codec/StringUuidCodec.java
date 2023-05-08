@@ -1,70 +1,61 @@
 package io.connect.scylladb.codec;
 
+import com.datastax.oss.driver.api.core.ProtocolVersion;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
+import com.datastax.oss.driver.api.core.type.codec.TypeCodecs;
+import com.datastax.oss.driver.api.core.type.reflect.GenericType;
+import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.Nullable;
+
 import java.nio.ByteBuffer;
-import java.util.Objects;
 import java.util.UUID;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.ProtocolVersion;
-import com.datastax.driver.core.TypeCodec;
-import com.datastax.driver.core.exceptions.InvalidTypeException;
-
-/**
- * A {@link TypeCodec} that converts from {@link DataType#uuid()} to {@link String}.
- */
-public class StringUuidCodec extends TypeCodec<String> {
-
-  /**
-   * A shared immutable instance.
-   */
+public class StringUuidCodec implements TypeCodec<String> {
   public static final StringUuidCodec INSTANCE = new StringUuidCodec();
 
-  protected final TypeCodec<UUID> uuidCodec;
-
-  public StringUuidCodec() {
-    this(DataType.uuid(), TypeCodec.uuid());
-  }
-
-  protected StringUuidCodec(DataType dataType, TypeCodec<UUID> baseCodec) {
-    super(dataType, String.class);
-    Objects.requireNonNull(baseCodec);
-    this.uuidCodec = baseCodec;
-  }
-
-  protected UUID parseAsUuid(String value) {
-    return uuidCodec.parse(value);
-  }
-
+  @NonNull
   @Override
-  public String parse(String value) {
-    try {
-      UUID uuid = parseAsUuid(value);
-      return uuid != null ? uuid.toString() : null;
-    } catch (InvalidTypeException e) {
-      throw new InvalidTypeException(
-          String.format("Cannot parse string UUID value from \"%s\"", value),
-          e
-      );
-    }
+  public GenericType<String> getJavaType() {
+    return GenericType.STRING;
   }
 
+  @NonNull
   @Override
-  public String format(String value) {
+  public DataType getCqlType() {
+    return DataTypes.UUID;
+  }
+
+  @Nullable
+  @Override
+  public ByteBuffer encode(@Nullable String value, @NonNull ProtocolVersion protocolVersion) {
+    UUID uuid = TypeCodecs.UUID.parse(value);
+    return uuid == null ? null : TypeCodecs.UUID.encode(uuid, protocolVersion);
+  }
+
+  @Nullable
+  @Override
+  public String decode(@Nullable ByteBuffer bytes, @NonNull ProtocolVersion protocolVersion) {
+    UUID uuid = TypeCodecs.UUID.decode(bytes, protocolVersion);
+    return uuid == null ? null : uuid.toString();
+  }
+
+  @NonNull
+  @Override
+  public String format(@Nullable String value) {
     return value == null ? "NULL" : value;
   }
 
+  @Nullable
   @Override
-  public ByteBuffer serialize(
-      String value,
-      ProtocolVersion protocolVersion
-  ) throws InvalidTypeException {
-    UUID uuid = parseAsUuid(value);
-    return uuid == null ? null : uuidCodec.serialize(uuid, protocolVersion);
-  }
+  public String parse(@Nullable String value) {
+    try {
+      UUID uuid = TypeCodecs.UUID.parse(value);
+      return uuid != null ? uuid.toString() : null;
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(String.format("Cannot parse string UUID value from \"%s\"", value), e);
+    }
 
-  @Override
-  public String deserialize(ByteBuffer bytes, ProtocolVersion protocolVersion) {
-    UUID uuid = uuidCodec.deserialize(bytes, protocolVersion);
-    return uuid == null ? null : uuid.toString();
   }
 }

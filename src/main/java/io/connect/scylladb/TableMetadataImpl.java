@@ -1,9 +1,9 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.ColumnMetadata;
-import com.datastax.driver.core.DataType;
-import com.google.common.base.MoreObjects;
-import com.google.common.collect.ImmutableList;
+import com.datastax.oss.driver.api.core.metadata.schema.ColumnMetadata;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.shaded.guava.common.base.MoreObjects;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableList;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,7 +21,7 @@ class TableMetadataImpl {
 
     @Override
     public String getName() {
-      return this.columnMetadata.getName();
+      return this.columnMetadata.getName().toString();
     }
 
     @Override
@@ -33,7 +33,7 @@ class TableMetadataImpl {
     public String toString() {
       return MoreObjects.toStringHelper(this)
           .add("name", this.columnMetadata.getName())
-          .add("type", this.columnMetadata.getType().getName())
+          .add("type", this.columnMetadata.getType().asCql(true, true))
           .toString();
     }
   }
@@ -41,21 +41,21 @@ class TableMetadataImpl {
   static class TableImpl implements TableMetadata.Table {
     final String name;
     final String keyspace;
-    final com.datastax.driver.core.TableMetadata tableMetadata;
+    final com.datastax.oss.driver.api.core.metadata.schema.TableMetadata tableMetadata;
     final Map<String, TableMetadata.Column> columns;
     final List<TableMetadata.Column> primaryKey;
 
-    TableImpl(com.datastax.driver.core.TableMetadata tableMetadata) {
+    TableImpl(com.datastax.oss.driver.api.core.metadata.schema.TableMetadata tableMetadata) {
       this.tableMetadata = tableMetadata;
-      this.name = this.tableMetadata.getName();
-      this.keyspace = this.tableMetadata.getKeyspace().getName();
+      this.name = this.tableMetadata.getName().asInternal();
+      this.keyspace = this.tableMetadata.getKeyspace().asInternal();
       this.primaryKey = this.tableMetadata.getPrimaryKey()
           .stream()
           .map(ColumnImpl::new)
           .collect(Collectors.toList());
       List<TableMetadata.Column> allColumns = new ArrayList<>();
       allColumns.addAll(
-          this.tableMetadata.getColumns().stream()
+          this.tableMetadata.getColumns().values().stream()
               .map(ColumnImpl::new)
               .collect(Collectors.toList())
       );

@@ -1,13 +1,15 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.BoundStatement;
-import com.datastax.driver.core.LocalDate;
-import com.datastax.driver.core.PreparedStatement;
+import com.datastax.oss.driver.api.core.cql.BoundStatement;
+import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +20,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
 
   static class State {
 
-    public final BoundStatement statement;
+    public BoundStatement statement;
     public int parameters = 0;
 
     State(BoundStatement statement) {
@@ -40,7 +42,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       String value
   ) {
-    state.statement.setString(fieldName, value);
+    state.statement = state.statement.setString(fieldName, value);
     state.parameters++;
   }
 
@@ -49,7 +51,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Float value
   ) {
-    state.statement.setFloat(fieldName, value);
+    state.statement = state.statement.setFloat(fieldName, value);
     state.parameters++;
   }
 
@@ -58,7 +60,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Double value
   ) {
-    state.statement.setDouble(fieldName, value);
+    state.statement = state.statement.setDouble(fieldName, value);
     state.parameters++;
   }
 
@@ -67,7 +69,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Date value
   ) {
-    state.statement.setTimestamp(fieldName, value);
+    state.statement = state.statement.setInstant(fieldName, value.toInstant());
     state.parameters++;
   }
 
@@ -76,7 +78,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Date value
   ) {
-    state.statement.setDate(fieldName, LocalDate.fromMillisSinceEpoch(value.getTime()));
+    state.statement = state.statement.setLocalDate(fieldName, LocalDate.from(value.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()));
     state.parameters++;
   }
 
@@ -85,8 +87,9 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Date value
   ) {
-    final long nanoseconds = TimeUnit.MILLISECONDS.convert(value.getTime(), TimeUnit.NANOSECONDS);
-    state.statement.setTime(fieldName, nanoseconds);
+    final long nanoseconds = TimeUnit.NANOSECONDS.convert(value.getTime(), TimeUnit.MILLISECONDS);
+    state.statement = state.statement.setLocalTime(fieldName, LocalTime.ofNanoOfDay(nanoseconds));
+
     state.parameters++;
   }
 
@@ -95,7 +98,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Byte value
   ) {
-    state.statement.setByte(fieldName, value);
+    state.statement = state.statement.setByte(fieldName, value);
     state.parameters++;
   }
 
@@ -104,7 +107,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Short value
   ) {
-    state.statement.setShort(fieldName, value);
+    state.statement = state.statement.setShort(fieldName, value);
     state.parameters++;
   }
 
@@ -113,7 +116,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Integer value
   ) {
-    state.statement.setInt(fieldName, value);
+    state.statement = state.statement.setInt(fieldName, value);
     state.parameters++;
   }
 
@@ -122,7 +125,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Long value
   ) {
-    state.statement.setLong(fieldName, value);
+    state.statement = state.statement.setLong(fieldName, value);
     state.parameters++;
   }
 
@@ -131,7 +134,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       byte[] value
   ) {
-    state.statement.setBytes(fieldName, ByteBuffer.wrap(value));
+    state.statement = state.statement.setByteBuffer(fieldName, ByteBuffer.wrap(value));
     state.parameters++;
   }
 
@@ -140,7 +143,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       BigDecimal value
   ) {
-    state.statement.setDecimal(fieldName, value);
+    state.statement = state.statement.setBigDecimal(fieldName, value);
     state.parameters++;
   }
 
@@ -149,7 +152,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Boolean value
   ) {
-    state.statement.setBool(fieldName, value);
+    state.statement = state.statement.setBool(fieldName, value);
     state.parameters++;
   }
 
@@ -167,7 +170,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       Schema schema,
       List value
   ) {
-    state.statement.setList(fieldName, value);
+    state.statement = state.statement.setList(fieldName, value, Object.class);
     state.parameters++;
   }
 
@@ -177,7 +180,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       Schema schema,
       Map value
   ) {
-    state.statement.setMap(fieldName, value);
+    state.statement = state.statement.setMap(fieldName, value, Object.class, Object.class);
     state.parameters++;
   }
 
@@ -185,7 +188,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       RecordToBoundStatementConverter.State state,
       String fieldName
   ) {
-    state.statement.setToNull(fieldName);
+    state.statement = state.statement.setToNull(fieldName);
     state.parameters++;
   }
 }

@@ -7,7 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-import com.datastax.driver.core.ResultSet;
+import com.datastax.oss.driver.api.core.type.DataTypes;
+import com.datastax.oss.driver.api.querybuilder.SchemaBuilder;
+import com.datastax.oss.driver.api.querybuilder.schema.CreateKeyspace;
+import com.datastax.oss.driver.api.querybuilder.schema.CreateTable;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableMap;
 import io.connect.scylladb.utils.VersionUtil;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.Config;
@@ -17,12 +21,6 @@ import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.schemabuilder.Create;
-import com.datastax.driver.core.schemabuilder.KeyspaceOptions;
-import com.datastax.driver.core.schemabuilder.SchemaBuilder;
-import com.google.common.collect.ImmutableMap;
 
 /**
  * Sink connector class for Scylla Database.
@@ -52,24 +50,23 @@ public class ScyllaDbSinkConnector extends SinkConnector {
     try (ScyllaDbSession session = sessionFactory.newSession(config)) {
 
       if (config.keyspaceCreateEnabled) {
-        KeyspaceOptions createKeyspace = SchemaBuilder.createKeyspace(config.keyspace)
+        CreateKeyspace createKeyspace = SchemaBuilder.createKeyspace(config.keyspace)
                 .ifNotExists()
-                .with()
-                .durableWrites(true)
-                .replication(ImmutableMap.of(
-                        "class", (Object) "SimpleStrategy",
-                        "replication_factor", config.keyspaceReplicationFactor
-                ));
-        session.executeStatement(createKeyspace);
+                .withReplicationOptions(ImmutableMap.of(
+                "class", (Object) "SimpleStrategy",
+                "replication_factor", config.keyspaceReplicationFactor
+                  ))
+            .withDurableWrites(true);
+        session.executeStatement(createKeyspace.build());
       }
       if (config.offsetEnabledInScyllaDB) {
-        final Create createOffsetStorage = SchemaBuilder
+        final CreateTable createOffsetStorage = SchemaBuilder
                 .createTable(config.keyspace, config.offsetStorageTable)
-                .addPartitionKey("topic", DataType.varchar())
-                .addPartitionKey("partition", DataType.cint())
-                .addColumn("offset", DataType.bigint())
-                .ifNotExists();
-        session.executeStatement(createOffsetStorage);
+                .ifNotExists()
+                .withPartitionKey("topic", DataTypes.TEXT)
+                .withPartitionKey("partition", DataTypes.INT)
+                .withColumn("offset", DataTypes.BIGINT);
+        session.executeStatement(createOffsetStorage.build());
       }
 
     } catch (IOException ex) {

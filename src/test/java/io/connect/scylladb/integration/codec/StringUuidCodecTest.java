@@ -1,7 +1,6 @@
 package io.connect.scylladb.integration.codec;
 
-import com.datastax.driver.core.ProtocolVersion;
-import com.datastax.driver.core.exceptions.InvalidTypeException;
+import com.datastax.oss.driver.api.core.ProtocolVersion;
 import io.connect.scylladb.codec.StringUuidCodec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
@@ -11,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import java.nio.ByteBuffer;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class StringUuidCodecTest {
@@ -69,14 +67,14 @@ class StringUuidCodecTest {
 
   @Test
   public void shouldFailToSerializeNonUuidString() {
-    Assertions.assertThrows(InvalidTypeException.class, () -> {
-      codec.serialize(NON_UUID_STR, ProtocolVersion.DEFAULT);
+    Assertions.assertThrows(IllegalArgumentException.class, () -> {
+      codec.encode(NON_UUID_STR, ProtocolVersion.V4);
     });
   }
 
   protected void assertSerializeAndDeserialize(String uuidStr) {
-    ByteBuffer buffer = codec.serialize(uuidStr, ProtocolVersion.DEFAULT);
-    String deserialized = codec.deserialize(buffer, ProtocolVersion.DEFAULT);
+    ByteBuffer buffer = codec.encode(uuidStr, ProtocolVersion.V4);
+    String deserialized = codec.decode(buffer, ProtocolVersion.V4);
     assertEquals(uuidStr, deserialized);
   }
 }

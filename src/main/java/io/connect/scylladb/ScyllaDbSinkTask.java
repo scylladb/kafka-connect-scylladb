@@ -7,18 +7,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
-import com.datastax.driver.core.BoundStatement;
-import com.datastax.driver.core.CodecRegistry;
-import com.datastax.driver.core.ConsistencyLevel;
-import com.datastax.driver.core.ProtocolVersion;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.ResultSetFuture;
-import com.datastax.driver.core.Statement;
-import com.google.common.collect.Iterables;
+import com.datastax.oss.driver.api.core.AllNodesFailedException;
+import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
+import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import io.connect.scylladb.utils.VersionUtil;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
@@ -30,7 +26,6 @@ import org.apache.kafka.connect.sink.SinkTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.datastax.driver.core.exceptions.TransportException;
 
 /**
  * Task class for ScyllaDB Sink Connector.
@@ -95,7 +90,7 @@ public class ScyllaDbSinkTask extends SinkTask {
    */
   @Override
   public void put(Collection<SinkRecord> records) {
-    final List<ResultSetFuture> futures = new ArrayList<>(records.size());
+    final List<CompletionStage<AsyncResultSet>> futures = new ArrayList<>(records.size());
 
     for (SinkRecord record : records) {
       try {
@@ -104,7 +99,7 @@ public class ScyllaDbSinkTask extends SinkTask {
 
         BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
         log.trace("put() - Executing Bound Statement {} for {}:{}:{}",
-                boundStatement.preparedStatement().getQueryString(),
+                boundStatement.getPreparedStatement().getQuery(),
                 record.topic(),
                 record.kafkaPartition(),
                 record.kafkaOffset()
@@ -114,7 +109,7 @@ public class ScyllaDbSinkTask extends SinkTask {
         topicOffsets.put(new TopicPartition(record.topic(), record.kafkaPartition()),
                 new OffsetAndMetadata(record.kafkaOffset() + 1));
 
-        ResultSetFuture resultSetFuture = this.getValidSession().executeStatementAsync(boundStatement);
+        CompletionStage<AsyncResultSet> resultSetFuture = this.getValidSession().executeStatementAsync(boundStatement);
         futures.add(resultSetFuture);
       } catch (DataException | NullPointerException ex) {
         handleErrors(record, ex);
@@ -124,13 +119,13 @@ public class ScyllaDbSinkTask extends SinkTask {
     if (!futures.isEmpty()) {
       try {
         log.debug("put() - Checking future(s)");
-        for (ResultSetFuture future : futures) {
-          ResultSet resultSet =
-                  future.getUninterruptibly(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
+        for (CompletionStage<AsyncResultSet> future : futures) {
+          AsyncResultSet resultSet =
+                  future.toCompletableFuture().get(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
         }
         context.requestCommit();
         // TODO : Log the records that fail in Queue/Kafka Topic.
-      } catch (TransportException ex) {
+      } catch (AllNodesFailedException ex) {
         log.debug("put() - Setting clusterValid = false", ex);
         getValidSession().setInvalid();
         throw new RetriableException(ex);
@@ -158,15 +153,15 @@ public class ScyllaDbSinkTask extends SinkTask {
     if (config.isOffsetEnabledInScyllaDb()) {
       try {
         log.debug("flush() - Flushing offsets to {}", this.config.offsetStorageTable);
-        List<ResultSetFuture> insertFutures = currentOffsets.entrySet().stream()
+        List<CompletionStage<AsyncResultSet>> insertFutures = currentOffsets.entrySet().stream()
           .map(e -> this.getValidSession().getInsertOffsetStatement(e.getKey(), e.getValue()))
           .map(s -> getValidSession().executeStatementAsync(s))
           .collect(Collectors.toList());
 
-        for (ResultSetFuture future : insertFutures) {
-          future.getUninterruptibly(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
+        for (CompletionStage<AsyncResultSet> future : insertFutures) {
+          future.toCompletableFuture().get(this.config.statementTimeoutMs, TimeUnit.MILLISECONDS);
         }
-      } catch (TransportException ex) {
+      } catch (AllNodesFailedException ex) {
         log.debug("put() - Setting clusterValid = false", ex);
         getValidSession().setInvalid();
         throw new RetriableException(ex);

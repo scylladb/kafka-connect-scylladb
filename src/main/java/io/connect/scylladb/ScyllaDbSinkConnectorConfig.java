@@ -6,28 +6,25 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.datastax.oss.driver.api.core.ConsistencyLevel;
+import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
+import com.datastax.oss.driver.shaded.guava.common.base.Strings;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableSet;
 import io.connect.scylladb.utils.ListRecommender;
 import io.connect.scylladb.utils.NullOrReadableFile;
 import io.connect.scylladb.utils.VisibleIfEqual;
 import org.apache.kafka.common.config.AbstractConfig;
-import org.apache.kafka.common.config.Config;
 import org.apache.kafka.common.config.ConfigDef;
 
-import com.datastax.driver.core.ConsistencyLevel;
-import com.datastax.driver.core.ProtocolOptions;
-import com.datastax.driver.core.schemabuilder.SchemaBuilder;
-import com.datastax.driver.core.schemabuilder.TableOptions;
-import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableMap;
 
 import io.confluent.kafka.connect.utils.config.ConfigUtils;
 import io.confluent.kafka.connect.utils.config.ValidEnum;
 import io.confluent.kafka.connect.utils.config.ValidPort;
 import io.connect.scylladb.topictotable.TopicConfigs;
-import io.netty.handler.ssl.SslProvider;
 
 /**
  * Configuration class for {@link ScyllaDbSinkConnector}.
@@ -40,16 +37,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final boolean securityEnabled;
   public final String username;
   public final String password;
-  public final ProtocolOptions.Compression compression;
+  public final String compression;
   public final boolean sslEnabled;
-  public final SslProvider sslProvider;
   public final boolean deletesEnabled;
   public final String keyspace;
   public final boolean keyspaceCreateEnabled;
   public final int keyspaceReplicationFactor;
   public final boolean offsetEnabledInScyllaDB;
   public final boolean tableManageEnabled;
-  public final TableOptions.CompressionOptions tableCompressionAlgorithm;
+  public final String tableCompressionAlgorithm;
   public final char[] trustStorePassword;
   public final File trustStorePath;
   public final char[] keyStorePassword;
@@ -61,33 +57,21 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final Integer ttl;
   public final BehaviorOnError behaviourOnError;
   public final List<String> cipherSuites;
-  public final File certFilePath;
-  public final File privateKeyPath;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
 
-  static final Map<String, ProtocolOptions.Compression> CLIENT_COMPRESSION =
-      ImmutableMap.of(
-          "NONE", ProtocolOptions.Compression.NONE,
-          "SNAPPY", ProtocolOptions.Compression.SNAPPY,
-          "LZ4", ProtocolOptions.Compression.LZ4
-      );
+  static final Set<String> CLIENT_COMPRESSION = ImmutableSet.of("none", "lz4", "snappy");
 
-  static final Map<String, TableOptions.CompressionOptions.Algorithm> TABLE_COMPRESSION =
-      ImmutableMap.of(
-          "NONE", TableOptions.CompressionOptions.Algorithm.NONE,
-          "SNAPPY", TableOptions.CompressionOptions.Algorithm.SNAPPY,
-          "LZ4", TableOptions.CompressionOptions.Algorithm.LZ4,
-          "DEFLATE", TableOptions.CompressionOptions.Algorithm.DEFLATE
-      );
+  static final Set<String> TABLE_COMPRESSORS = ImmutableSet.of("SnappyCompressor", "LZ4Compressor", "DeflateCompressor", "none");
+
 
   public ScyllaDbSinkConnectorConfig(Map<?, ?> originals) {
     super(config(), originals);
     this.port = getInt(PORT_CONFIG);
     this.contactPoints = getString(CONTACT_POINTS_CONFIG);
     this.consistencyLevel =
-            ConfigUtils.getEnum(ConsistencyLevel.class, this, CONSISTENCY_LEVEL_CONFIG);
+            ConfigUtils.getEnum(DefaultConsistencyLevel.class, this, CONSISTENCY_LEVEL_CONFIG);
     this.username = getString(USERNAME_CONFIG);
     this.password = getPassword(PASSWORD_CONFIG) == null ? null : getPassword(PASSWORD_CONFIG).value();
     this.securityEnabled = getBoolean(SECURITY_ENABLE_CONFIG);
@@ -109,37 +93,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
     this.cipherSuites = getList(SSL_CIPHER_SUITES_CONFIG);
 
-    final String certFilePath = this.getString(SSL_OPENSLL_KEYCERTCHAIN_CONFIG);
-    this.certFilePath = Strings.isNullOrEmpty(certFilePath) ? null : new File(certFilePath);
-    final String privateKeyPath = this.getString(SSL_OPENSLL_PRIVATEKEY_CONFIG);
-    this.privateKeyPath = Strings.isNullOrEmpty(privateKeyPath) ? null : new File(privateKeyPath);
-
     final String compression = getString(COMPRESSION_CONFIG);
-    this.compression = CLIENT_COMPRESSION.get(compression);
-    this.sslProvider = ConfigUtils.getEnum(SslProvider.class, this, SSL_PROVIDER_CONFIG);
+    this.compression = compression;
     this.keyspaceCreateEnabled = getBoolean(KEYSPACE_CREATE_ENABLED_CONFIG);
     this.offsetEnabledInScyllaDB = getBoolean(ENABLE_OFFSET_STORAGE_TABLE);
     this.keyspaceReplicationFactor = getInt(KEYSPACE_REPLICATION_FACTOR_CONFIG);
     this.tableManageEnabled = getBoolean(TABLE_MANAGE_ENABLED_CONFIG);
-    TableOptions.CompressionOptions.Algorithm tableCompressionAlgo = ConfigUtils.getEnum(
-            TableOptions.CompressionOptions.Algorithm.class,
-            this,
-            TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG
-    );
-
-    switch (tableCompressionAlgo.name()) {
-      case "SNAPPY" :
-        tableCompressionAlgorithm = SchemaBuilder.snappy();
-        break;
-      case "LZ4" :
-        tableCompressionAlgorithm = SchemaBuilder.lz4();
-        break;
-      case "DEFLATE" :
-        tableCompressionAlgorithm = SchemaBuilder.deflate();
-        break;
-      default :
-        tableCompressionAlgorithm = SchemaBuilder.noCompression();
-    }
+    this.tableCompressionAlgorithm = getString(TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG);
 
     this.offsetStorageTable = getString(OFFSET_STORAGE_TABLE_CONF);
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
@@ -192,10 +152,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String SSL_ENABLED_CONFIG = "scylladb.ssl.enabled";
   private static final String SSL_ENABLED_DOC = "Flag to determine if SSL is enabled when connecting to ScyllaDB.";
 
-  public static final String SSL_PROVIDER_CONFIG = "scylladb.ssl.provider";
-  private static final String SSL_PROVIDER_DOC = "The SSL Provider to use when connecting to ScyllaDB. "
-          + "Valid Values are JDK, OPENSSL, OPENSSL_REFCNT.";
-
   public static final String SECURITY_ENABLE_CONFIG = "scylladb.security.enabled";
   static final String SECURITY_ENABLE_DOC = "To enable security while loading "
           + "the sink connector and connecting to ScyllaDB.";
@@ -227,7 +183,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "to the number of nodes where data (rows and partitions) are replicated. Data is replicated to multiple (RF=N) nodes";
 
   public static final String COMPRESSION_CONFIG = "scylladb.compression";
-  private static final String COMPRESSION_DOC = "Compression algorithm to use when connecting to ScyllaDB. "
+  private static final String COMPRESSION_DOC = "Compression algorithm to use when communicating with ScyllaDB. "
           + "Valid Values are NONE, SNAPPY, LZ4.";
 
   public static final String TABLE_MANAGE_ENABLED_CONFIG = "scylladb.table.manage.enabled";
@@ -235,7 +191,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG = "scylladb.table.create.compression.algorithm";
   private static final String TABLE_CREATE_COMPRESSION_ALGORITHM_DOC = "Compression algorithm to use when the table is created. "
-          + "Valid Values are NONE, SNAPPY, LZ4, DEFLATE.";
+      + "Valid Values are NONE, SNAPPY, LZ4, DEFLATE.";
+
 
   public static final String OFFSET_STORAGE_TABLE_CONF = "scylladb.offset.storage.table";
   private static final String OFFSET_STORAGE_TABLE_DOC = "The table within the ScyllaDB keyspace "
@@ -266,13 +223,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String SSL_CIPHER_SUITES_CONFIG = "scylladb.ssl.cipherSuites";
   private static final String SSL_CIPHER_SUITES_DOC = "The cipher suites to enable. "
           + "Defaults to none, resulting in a ``minimal quality of service`` according to JDK documentation.";
-
-  public static final String SSL_OPENSLL_KEYCERTCHAIN_CONFIG = "scylladb.ssl.openssl.keyCertChain";
-  private static final String SSL_OPENSLL_KEYCERTCHAIN_DOC = "Path to the SSL certificate file, when using OpenSSL.";
-
-  public static final String SSL_OPENSLL_PRIVATEKEY_CONFIG = "ssl.openssl.privateKey";
-  private static final String SSL_OPENSLL_PRIVATEKEY_DOC = "Path to the private key file, when using OpenSSL.";
-
   public static final String TTL_CONFIG = "scylladb.ttl";
   /*If TTL value is not specified then skip setting ttl value while making insert query*/
   public static final Integer TTL_DEFAULT = null;
@@ -281,7 +231,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "If this configuration is not provided, the Sink Connector will perform "
           + "insert operations in ScyllaDB  without TTL setting.";
 
-  private static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
+  public static final String LOAD_BALANCING_LOCAL_DC_CONFIG = "scylladb.loadbalancing.localdc";
   private static final String LOAD_BALANCING_LOCAL_DC_DEFAULT = "";
   private static final String LOAD_BALANCING_LOCAL_DC_DOC = "The case-sensitive Data Center name "
           + "local to the machine on which the connector is running. It is a recommended config if "
@@ -378,15 +328,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             .define(
                     COMPRESSION_CONFIG,
                     ConfigDef.Type.STRING,
-                    "NONE",
-                    ConfigDef.ValidString.in(CLIENT_COMPRESSION.keySet().toArray(new String[0])),
+                    "none",
+                    ConfigDef.ValidString.in(CLIENT_COMPRESSION.toArray(new String[0])),
                     ConfigDef.Importance.LOW,
                     COMPRESSION_DOC,
                     CONNECTION_GROUP,
                     5,
                     ConfigDef.Width.SHORT,
                     "Compression",
-                    new ListRecommender(Arrays.asList(CLIENT_COMPRESSION.keySet().toArray())))
+                    new ListRecommender(Arrays.asList(CLIENT_COMPRESSION.toArray())))
             .define(
                     SSL_ENABLED_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -397,19 +347,6 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     6,
                     ConfigDef.Width.SHORT,
                     "SSL Enabled?")
-            .define(
-                    SSL_PROVIDER_CONFIG,
-                    ConfigDef.Type.STRING,
-                    SslProvider.JDK.toString(),
-                    ValidEnum.of(SslProvider.class),
-                    ConfigDef.Importance.LOW,
-                    SSL_PROVIDER_DOC,
-                    SSL_GROUP,
-                    0,
-                    ConfigDef.Width.SHORT,
-                    "SSL Provider",
-                    Collections.singletonList(SSL_ENABLED_CONFIG),
-                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true, Arrays.asList(SslProvider.values())))
             .define(
                     SSL_TRUSTSTORE_PATH_CONFIG,
                     ConfigDef.Type.STRING,
@@ -473,41 +410,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     Collections.singletonList(SSL_ENABLED_CONFIG),
                     new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
             .define(
-                    SSL_OPENSLL_KEYCERTCHAIN_CONFIG,
-                    ConfigDef.Type.STRING,
-                    null,
-                    ConfigDef.Importance.HIGH,
-                    SSL_OPENSLL_KEYCERTCHAIN_DOC,
-                    SSL_GROUP,
-                    6,
-                    ConfigDef.Width.SHORT,
-                    "The path to the certificate chain file",
-                    Collections.singletonList(SSL_ENABLED_CONFIG),
-                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
-            .define(
-                    SSL_OPENSLL_PRIVATEKEY_CONFIG,
-                    ConfigDef.Type.STRING,
-                    null,
-                    ConfigDef.Importance.HIGH,
-                    SSL_OPENSLL_PRIVATEKEY_DOC,
-                    SSL_GROUP,
-                    7,
-                    ConfigDef.Width.SHORT,
-                    "The path to the private key file",
-                    Collections.singletonList(SSL_ENABLED_CONFIG),
-                    new VisibleIfEqual(SSL_ENABLED_CONFIG, true))
-            .define(
                     CONSISTENCY_LEVEL_CONFIG,
                     ConfigDef.Type.STRING,
                     ConsistencyLevel.LOCAL_QUORUM.toString(),
-                    ValidEnum.of(ConsistencyLevel.class),
+                    ValidEnum.of(DefaultConsistencyLevel.class),
                     ConfigDef.Importance.HIGH,
                     CONSISTENCY_LEVEL_DOC,
                     WRITE_GROUP,
                     0,
                     ConfigDef.Width.SHORT,
                     "Consistency Level",
-                    new ListRecommender(Arrays.asList(toStringArray(ConsistencyLevel.values()))))
+                    new ListRecommender(Arrays.asList(DefaultConsistencyLevel.values())))
             .define(
                     DELETES_ENABLE_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -563,8 +476,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             .define(
                     TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG,
                     ConfigDef.Type.STRING,
-                    "NONE",
-                    ConfigDef.ValidString.in(TABLE_COMPRESSION.keySet().toArray(new String[0])),
+                    "none",
+                    ConfigDef.ValidString.in(TABLE_COMPRESSORS.toArray(new String[0])),
                     ConfigDef.Importance.MEDIUM,
                     TABLE_CREATE_COMPRESSION_ALGORITHM_DOC,
                     TABLE_GROUP,
@@ -572,7 +485,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.SHORT,
                     "Table Compression",
                     Collections.singletonList(TABLE_MANAGE_ENABLED_CONFIG),
-                    new VisibleIfEqual(TABLE_MANAGE_ENABLED_CONFIG, true, Arrays.asList(TABLE_COMPRESSION.keySet().toArray(new String[0]))))
+                    new VisibleIfEqual(TABLE_MANAGE_ENABLED_CONFIG, true, Arrays.asList(TABLE_COMPRESSORS.toArray(new String[0]))))
             .define(
                     OFFSET_STORAGE_TABLE_CONF,
                     ConfigDef.Type.STRING,

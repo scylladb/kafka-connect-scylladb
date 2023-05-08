@@ -1,6 +1,5 @@
 package io.connect.scylladb;
 
-import org.apache.kafka.common.config.ConfigException;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -33,12 +32,6 @@ public class ScyllaDbSinkConnectorConfigTest {
   public void shouldUseDefaults() {
     config = new ScyllaDbSinkConnectorConfig(settings);
     assertEquals(true, config.keyspaceCreateEnabled);
-  }
-
-  @Test(expected = IllegalStateException.class)
-  public void shouldNotAllowInvalidSSLProvide() {
-    settings.put(ScyllaDbSinkConnectorConfig.SSL_PROVIDER_CONFIG, "DKJ");
-    new ScyllaDbSinkConnectorConfig(settings);
   }
 
   //TODO: Add more tests

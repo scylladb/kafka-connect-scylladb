@@ -1,57 +1,68 @@
 package io.connect.scylladb.codec;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.ProtocolVersion;
-import com.datastax.driver.core.TypeCodec;
-import com.datastax.driver.core.exceptions.InvalidTypeException;
+import com.datastax.oss.driver.api.core.ProtocolVersion;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
+import com.datastax.oss.driver.api.core.type.reflect.GenericType;
+import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.Nullable;
 
 import java.nio.ByteBuffer;
 import java.util.Objects;
 
-public abstract class StringAbstractCodec<T> extends TypeCodec<String> {
+public class StringAbstractCodec<T> implements TypeCodec<String> {
+  protected final TypeCodec<T> TCodec;
+  protected final DataType dataType;
 
-    protected final TypeCodec<T> TCodec;
+  protected StringAbstractCodec(DataType dataType, TypeCodec<T> baseCodec) {
+    Objects.requireNonNull(baseCodec);
+    this.TCodec = baseCodec;
+    this.dataType = dataType;
+  }
 
-    protected StringAbstractCodec(DataType dataType, TypeCodec<T> baseCodec) {
-        super(dataType, String.class);
-        Objects.requireNonNull(baseCodec);
-        this.TCodec = baseCodec;
+  protected T parseAsT(String value) {
+    return TCodec.parse(value);
+  }
+
+  @Override
+  public String parse(String value) {
+    try {
+      T t = parseAsT(value);
+      return t != null ? t.toString() : null;
+    } catch (IllegalArgumentException e) {
+      throw new IllegalArgumentException(String.format("Cannot parse string value from \"%s\"", value), e);
     }
+  }
 
-    protected T parseAsT(String value) {
-        return TCodec.parse(value);
-    }
+  @NonNull
+  @Override
+  public GenericType<String> getJavaType() {
+    return GenericType.STRING;
+  }
 
-    @Override
-    public String parse(String value) {
-        try {
-            T t = parseAsT(value);
-            return t != null ? t.toString() : null;
-        } catch (InvalidTypeException e) {
-            throw new InvalidTypeException(
-                    String.format("Cannot parse string value from \"%s\"", value),
-                    e
-            );
-        }
-    }
+  @NonNull
+  @Override
+  public DataType getCqlType() {
+    return dataType;
+  }
 
-    @Override
-    public String format(String value) {
-        return value == null ? "NULL" : value;
-    }
+  @Nullable
+  @Override
+  public ByteBuffer encode(@Nullable String value, @NonNull ProtocolVersion protocolVersion) {
+    T t = parseAsT(value);
+    return t == null ? null : TCodec.encode(t, protocolVersion);
+  }
 
-    @Override
-    public ByteBuffer serialize(
-            String value,
-            ProtocolVersion protocolVersion
-    ) throws InvalidTypeException {
-        T t = parseAsT(value);
-        return t == null ? null : TCodec.serialize(t, protocolVersion);
-    }
+  @Nullable
+  @Override
+  public String decode(@Nullable ByteBuffer bytes, @NonNull ProtocolVersion protocolVersion) {
+    T t = TCodec.decode(bytes, protocolVersion);
+    return t == null ? null : t.toString();
+  }
 
-    @Override
-    public String deserialize(ByteBuffer bytes, ProtocolVersion protocolVersion) {
-        T t = TCodec.deserialize(bytes, protocolVersion);
-        return t == null ? null : t.toString();
-    }
+  @NonNull
+  @Override
+  public String format(String value) {
+    return value == null ? "NULL" : value;
+  }
 }
