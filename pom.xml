@@ -27,7 +27,7 @@
         <failsafe.version>3.0.0-M5</failsafe.version>
         <kafka.version>2.4.0</kafka.version>
         <junit.version>5.2.0</junit.version>
-        <scylladb.version>3.11.2.0</scylladb.version>
+        <scylladb.version>4.14.1.0</scylladb.version>
         <netty.version>4.1.77.Final</netty.version>
         <netty-tcnative.version>2.0.7.Final</netty-tcnative.version>
         <skipIntegrationTests>false</skipIntegrationTests>
@@ -95,6 +95,7 @@
                 <version>${surefire.version}</version>
                 <configuration>
                     <excludedGroups>org.apache.kafka.test.IntegrationTest</excludedGroups>
+                    <trimStackTrace>false</trimStackTrace>
                 </configuration>
             </plugin>
             <plugin>
@@ -102,6 +103,7 @@
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <version>${failsafe.version}</version>
                 <configuration>
+                    <trimStackTrace>false</trimStackTrace>
                     <skip>${skipIntegrationTests}</skip>
                     <includes>**/*IT.java</includes>
                     <systemPropertyVariables>
@@ -197,11 +199,6 @@
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson-databind.version}</version>
             </dependency>
-            <dependency>
-                <groupId>com.google.guava</groupId>
-                <artifactId>guava</artifactId>
-                <version>${guava.version}</version>
-            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -230,7 +227,7 @@
 
         <dependency>
             <groupId>com.scylladb</groupId>
-            <artifactId>scylla-driver-core</artifactId>
+            <artifactId>java-driver-core</artifactId>
             <version>${scylladb.version}</version>
             <exclusions>
                 <exclusion>
@@ -250,8 +247,14 @@
 
         <dependency>
             <groupId>com.scylladb</groupId>
-            <artifactId>scylla-driver-extras</artifactId>
-            <version>3.11.0.1</version>
+            <artifactId>java-driver-query-builder</artifactId>
+            <version>${scylladb.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.scylladb</groupId>
+            <artifactId>java-driver-mapper-runtime</artifactId>
+            <version>${scylladb.version}</version>
         </dependency>
 
         <dependency>
@@ -322,6 +325,21 @@
             <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
+
+        <dependency>
+            <groupId>org.lz4</groupId>
+            <artifactId>lz4-java</artifactId>
+            <!-- should match version from drivers POM -->
+            <version>1.7.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.xerial.snappy</groupId>
+            <artifactId>snappy-java</artifactId>
+            <!-- should match version from drivers POM -->
+            <version>1.1.7.3</version>
+        </dependency>
+
 
         <!-- TODO: Dependency for Integration test -->
         <!--dependency>

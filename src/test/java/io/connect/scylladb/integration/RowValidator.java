@@ -1,13 +1,17 @@
 package io.connect.scylladb.integration;
 
-import com.datastax.driver.core.querybuilder.QueryBuilder;
-import com.datastax.driver.core.querybuilder.Select;
+import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.querybuilder.QueryBuilder;
+import com.datastax.oss.driver.api.querybuilder.relation.Relation;
+import com.datastax.oss.driver.api.querybuilder.select.Select;
+import com.datastax.oss.driver.api.querybuilder.select.SelectFrom;
 import com.google.common.base.Preconditions;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.util.Map;
 
+import static com.datastax.oss.driver.api.querybuilder.QueryBuilder.literal;
 import static io.connect.scylladb.integration.TestDataUtil.asMap;
 
 class RowValidator {
@@ -59,18 +63,11 @@ class RowValidator {
 
   @Override
   public String toString() {
-    Select select = QueryBuilder.select()
-        .from(table);
-    Select.Where where = null;
-
+    Select select = QueryBuilder.selectFrom(table).all();
     for (Map.Entry<String, Object> e : key.entrySet()) {
-      if (null == where) {
-        where = select.where(QueryBuilder.eq(e.getKey(), e.getValue()));
-      } else {
-        where = where.and(QueryBuilder.eq(e.getKey(), e.getValue()));
-      }
+      select = select.whereColumn(CqlIdentifier.fromInternal(e.getKey())).isEqualTo(literal(e.getValue()));
     }
 
-    return where.toString();
+    return select.asCql();
   }
 }

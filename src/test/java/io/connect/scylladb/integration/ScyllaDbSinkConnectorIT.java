@@ -1,13 +1,22 @@
 package io.connect.scylladb.integration;
 
-import com.datastax.driver.core.*;
-import com.datastax.driver.core.exceptions.NoHostAvailableException;
-import com.google.common.base.Stopwatch;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
+import com.datastax.oss.driver.api.core.AllNodesFailedException;
+import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.CqlSessionBuilder;
+import com.datastax.oss.driver.api.core.NoNodeAvailableException;
+import com.datastax.oss.driver.api.core.ProtocolVersion;
+import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
+import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
+import com.datastax.oss.driver.api.core.config.ProgrammaticDriverConfigLoaderBuilder;
+import com.datastax.oss.driver.api.core.cql.ResultSet;
+import com.datastax.oss.driver.api.core.cql.Row;
+import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
+import com.datastax.oss.driver.api.core.metadata.schema.TableMetadata;
+import com.datastax.oss.driver.shaded.guava.common.base.Stopwatch;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableList;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableMap;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableSet;
 import io.connect.scylladb.*;
-import io.netty.util.internal.SystemPropertyUtil;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.*;
@@ -27,6 +36,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
@@ -54,12 +68,16 @@ public class ScyllaDbSinkConnectorIT {
   private ScyllaDbSinkConnector connector;
   static final int MAX_CONNECTION_RETRIES = 30;
 
-  static Cluster.Builder clusterBuilder() {
-    Cluster.Builder clusterBuilder = Cluster.builder()
-            .withPort(SCYLLA_DB_PORT)
-            .addContactPoints(SCYLLA_DB_CONTACT_POINT)
-            .withProtocolVersion(ProtocolVersion.DEFAULT);
-    return clusterBuilder;
+  static CqlSessionBuilder sessionBuilder() {
+    ProgrammaticDriverConfigLoaderBuilder driverConfigLoaderBuilder =
+        DriverConfigLoader.programmaticBuilder()
+            .withString(DefaultDriverOption.PROTOCOL_VERSION, ProtocolVersion.V4.toString())
+            .withString(DefaultDriverOption.LOAD_BALANCING_LOCAL_DATACENTER, "datacenter1");
+
+    CqlSessionBuilder sessionBuilder = CqlSession.builder()
+            .addContactPoint(new InetSocketAddress(SCYLLA_DB_CONTACT_POINT, SCYLLA_DB_PORT))
+            .withConfigLoader(driverConfigLoaderBuilder.build());
+    return sessionBuilder;
   }
 
   static Map<String, String> settings() {
@@ -67,6 +85,7 @@ public class ScyllaDbSinkConnectorIT {
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, SCYLLADB_KEYSPACE);
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG, "true");
     result.put(ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG, SCYLLA_DB_CONTACT_POINT);
+    result.put(ScyllaDbSinkConnectorConfig.LOAD_BALANCING_LOCAL_DC_CONFIG, "datacenter1");
     result.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, String.valueOf(SCYLLA_DB_PORT));
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_REPLICATION_FACTOR_CONFIG, "1");
     return result;
@@ -76,19 +95,17 @@ public class ScyllaDbSinkConnectorIT {
   public static void setupKeyspace() throws InterruptedException {
     Properties systemProperties = System.getProperties();
     SCYLLA_DB_CONTACT_POINT = systemProperties.getProperty("scylla.docker.hostname", "localhost");
-    Cluster.Builder builder = clusterBuilder();
+    CqlSessionBuilder builder = sessionBuilder();
     int attempts = 0;
     while (true) {
       attempts++;
-      try (Cluster cluster = builder.build()) {
+      try (CqlSession session = builder.build()) {
         Stopwatch stopwatch = Stopwatch.createStarted();
 
         assertTrue(stopwatch.elapsed(TimeUnit.SECONDS) <= 30, "30 seconds have elapsed before creating keyspace.");
-        try (Session session = cluster.connect()) {
-          session.execute("SELECT cql_version FROM system.local");
-          break;
-        }
-      } catch (NoHostAvailableException ex) {
+        session.execute("SELECT cql_version FROM system.local");
+        break;
+      } catch (AllNodesFailedException ex) {
         log.debug("Exception thrown.", ex);
         if(attempts >= MAX_CONNECTION_RETRIES){
           throw ex;
@@ -113,13 +130,12 @@ public class ScyllaDbSinkConnectorIT {
   @AfterEach
   public void stop() {
     if (!this.validations.isEmpty()) {
-      try (Cluster cluster = clusterBuilder().build()) {
-        try (Session session = cluster.connect(SCYLLADB_KEYSPACE)) {
-          for (RowValidator validation : validations) {
-            assertRow(session, validation);
-          }
+      try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
+        for (RowValidator validation : validations) {
+          assertRow(session, validation);
         }
       }
+
     }
     String query = "DROP TABLE" + " " + SCYLLADB_OFFSET_TABLE;
     if (IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE)) {
@@ -383,7 +399,7 @@ public class ScyllaDbSinkConnectorIT {
               new RowValidator(
                       topic,
                       ImmutableMap.of("id", index),
-                      ImmutableMap.of("id", index, "value", LocalDate.fromMillisSinceEpoch(date.getTime()))
+                      ImmutableMap.of("id", index, "value", Instant.ofEpochMilli(date.getTime()).atZone(ZoneId.systemDefault()).toLocalDate())
               )
       );
     }
@@ -435,12 +451,11 @@ public class ScyllaDbSinkConnectorIT {
               )
       );
 
-      final long nanoseconds = TimeUnit.MILLISECONDS.convert(date.getTime(), TimeUnit.NANOSECONDS);
       this.validations.add(
               new RowValidator(
                       topic,
                       ImmutableMap.of("id", index),
-                      ImmutableMap.of("id", index, "value", nanoseconds)
+                      ImmutableMap.of("id", index, "value", date)
               )
       );
     }
@@ -753,9 +768,13 @@ public class ScyllaDbSinkConnectorIT {
     });
     assertThrows(DataException.class, () -> {throw ex.getCause();});
     log.info("Exception", ex);
+    String expected = "CREATE TABLE " + SCYLLADB_KEYSPACE + ".tableMissingManageTableDisabled".toLowerCase();
     assertTrue(
-            ex.getCause().getMessage().contains("CREATE TABLE " + SCYLLADB_KEYSPACE + ".tableMissingManageTableDisabled"),
-            "Exception message should contain create statement."
+            ex.getCause().getMessage().contains(expected),
+            String.format("Exception message should contain create statement." +
+                "\n Expected: %s" +
+                "\n Actual: %s"
+                , expected, ex.getCause().getMessage())
     );
   }
 
@@ -811,13 +830,13 @@ public class ScyllaDbSinkConnectorIT {
     assertThrows(DataException.class, () -> {throw ex.getCause();});
     log.info("Exception", ex);
     assertTrue(
-            ex.getCause().getMessage().contains("ALTER TABLE " + SCYLLADB_KEYSPACE + ".tableExistsAlterManageTableDisabled ADD city varchar;"),
-            "Error message should contain alter statement for city"
+            ex.getCause().getMessage().contains("ALTER TABLE " + SCYLLADB_KEYSPACE + ".tableExistsAlterManageTableDisabled".toLowerCase() + " ADD city text;"),
+            "Error message should contain alter statement for city. Actual message: " + ex.getCause().getMessage()
     );
 
     assertTrue(
-            ex.getCause().getMessage().contains("ALTER TABLE " + SCYLLADB_KEYSPACE + ".tableExistsAlterManageTableDisabled ADD state varchar;"),
-            "Error message should contain alter statement for state"
+            ex.getCause().getMessage().contains("ALTER TABLE " + SCYLLADB_KEYSPACE + ".tableExistsAlterManageTableDisabled".toLowerCase() + " ADD state text;"),
+            "Error message should contain alter statement for state. Actual message: " + ex.getCause().getMessage()
     );
   }
 
@@ -1028,7 +1047,7 @@ public class ScyllaDbSinkConnectorIT {
     verify(this.sinkTaskContext, times(0)).assignment();
   }
 
-  private void assertRow(Session session, RowValidator validation) {
+  private void assertRow(CqlSession session, RowValidator validation) {
     String query = validation.toString();
     log.info("Querying for {}", query);
     ResultSet results = session.execute(query);
@@ -1042,17 +1061,53 @@ public class ScyllaDbSinkConnectorIT {
       for (String field : validation.value.keySet()) {
         Object expected = validation.value.get(field);
         Object actual = row.getObject(field);
-        if (expected != null && actual != null && !expected.getClass().equals(actual.getClass())) {
+        // Quick fix for Kafka Timestamp.SCHEMA
+        // It's Java representation is a Date, but CQL timestamp is represented as java.time.Instant
+        if ((expected instanceof Float) && (actual instanceof Double)) {
+          log.debug("Comparing Double form of Float field {}. Query = '{}'", field, query);
+          Double expectedCasted = ((Float) expected).doubleValue();
+          assertEquals(
+              expectedCasted,
+              actual,
+              String.format("Field does not match. Query = '%s'", query)
+          );
+        }
+        else if ((expected instanceof java.util.Date) && (actual instanceof Instant)) {
+          log.debug("Comparing Instant form of Date field {}. Query = '{}'", field, query);
+          Instant expectedInstant = ((java.util.Date) expected).toInstant();
+          assertEquals(
+              expectedInstant,
+              actual,
+              String.format("Field does not match. Query = '%s'", query)
+          );
+        }
+        else if ((expected instanceof java.util.Date) && (actual instanceof LocalTime)) {
+          log.debug("Comparing LocalTime form of Date field {}. Query = '{}'", field, query);
+          final long nanoseconds = TimeUnit.NANOSECONDS.convert(((Date) expected).getTime(), TimeUnit.MILLISECONDS);
+          assertEquals(
+              LocalTime.ofNanoOfDay(nanoseconds),
+              actual,
+              String.format("Field does not match. Query = '%s'", query)
+          );
+        }
+        else if (expected != null && actual != null && !expected.getClass().equals(actual.getClass())) {
           // Convert both to a string ...
           expected = expected.toString();
           actual = actual.toString();
           log.debug("Comparing string form of field {}. Query = '{}'", field, query);
+          assertEquals(
+              expected,
+              actual,
+              String.format("Field does not match. Query = '%s'", query)
+          );
         }
-        assertEquals(
-                expected,
-                actual,
-                String.format("Field does not match. Query = '%s'", query)
-        );
+        else {
+          assertEquals(
+              expected,
+              actual,
+              String.format("Field does not match. Query = '%s'", query)
+          );
+        }
       }
     } else {
       assertNull(
@@ -1063,28 +1118,28 @@ public class ScyllaDbSinkConnectorIT {
   }
 
   private void execute(String cql) {
-    try (Cluster cluster = clusterBuilder().build()) {
-      try (Session session = cluster.connect(SCYLLADB_KEYSPACE)) {
-        log.info("Executing: '" + cql + "'");
-        session.execute(cql);
-        log.debug("Executed: '" + cql + "'");
-      }
+    try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
+      log.info("Executing: '" + cql + "'");
+      session.execute(cql);
+      log.debug("Executed: '" + cql + "'");
     }
   }
 
-  private List<Row> executeSelect(String query ) {
-    try (Cluster cluster = clusterBuilder().build()) {
-      try (Session session = cluster.connect(SCYLLADB_KEYSPACE)) {
-        return session.execute(query).all();
-      }
+  private List<Row> executeSelect(String query) {
+    try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
+      return session.execute(query).all();
     }
   }
 
   private Boolean IsOffsetStorageTableExists(String tableName) {
-    try (Cluster cluster = clusterBuilder().build()) {
-      KeyspaceMetadata ks = cluster.getMetadata().getKeyspace(SCYLLADB_KEYSPACE);
-      TableMetadata table = ks.getTable(tableName);
-      return (table == null) ? false : true;
+    try (CqlSession session = sessionBuilder().build()) {
+      Optional<KeyspaceMetadata> ks = session.getMetadata().getKeyspace(SCYLLADB_KEYSPACE);
+      if (!ks.isPresent()) {
+        return false;
+      } else {
+        Optional<TableMetadata> table = ks.get().getTable(tableName);
+        return table.isPresent();
+      }
     }
   }
 

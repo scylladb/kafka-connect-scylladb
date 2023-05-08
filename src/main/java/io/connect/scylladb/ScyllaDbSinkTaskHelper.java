@@ -1,7 +1,7 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.BoundStatement;
-import com.google.common.base.Preconditions;
+import com.datastax.oss.driver.api.core.cql.BoundStatement;
+import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.common.TopicPartition;
@@ -91,13 +91,13 @@ public class ScyllaDbSinkTaskHelper {
     if (topicConfigs != null) {
       log.trace("Topic mapped Consistency level : " + topicConfigs.getConsistencyLevel()
               + ", Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
-      boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
-      boundStatement.setDefaultTimestamp(topicConfigs.getTimeStamp());
+      boundStatement = boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
+      boundStatement = boundStatement.setQueryTimestamp(topicConfigs.getTimeStamp());
     } else {
-      boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
+      boundStatement = boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
       // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
       // while Scylla expects a microsecond precision: 1 ms = 1000 us.
-      boundStatement.setDefaultTimestamp(record.timestamp() * 1000);
+      boundStatement = boundStatement.setQueryTimestamp(record.timestamp() * 1000);
     }
     return boundStatement;
   }

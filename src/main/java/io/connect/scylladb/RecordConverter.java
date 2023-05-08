@@ -1,6 +1,6 @@
 package io.connect.scylladb;
 
-import com.google.common.base.Preconditions;
+import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.connect.data.Field;

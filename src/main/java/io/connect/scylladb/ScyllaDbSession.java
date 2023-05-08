@@ -1,19 +1,19 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.BoundStatement;
-import com.datastax.driver.core.KeyspaceMetadata;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.ResultSetFuture;
-import com.datastax.driver.core.Statement;
+import com.datastax.oss.driver.api.core.cql.AsyncResultSet;
+import com.datastax.oss.driver.api.core.cql.BoundStatement;
+import com.datastax.oss.driver.api.core.cql.ResultSet;
+import com.datastax.oss.driver.api.core.cql.Statement;
+import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.io.Closeable;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletionStage;
 
 public interface ScyllaDbSession extends Closeable {
 
@@ -25,7 +25,7 @@ public interface ScyllaDbSession extends Closeable {
     /**
      * Execute a statement asynchronously
      */
-    ResultSetFuture executeStatementAsync(Statement statement);
+    CompletionStage<AsyncResultSet> executeStatementAsync(Statement statement);
 
     /**
      * Execute a query
