@@ -1,45 +1,41 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.CodecRegistry;
-import com.datastax.driver.core.ProtocolVersion;
-import com.datastax.driver.core.RemoteEndpointAwareNettySSLOptions;
-import com.datastax.driver.core.SSLOptions;
-import com.datastax.driver.core.Session;
-import com.datastax.driver.core.policies.DCAwareRoundRobinPolicy;
-import com.datastax.driver.extras.codecs.date.SimpleDateCodec;
 import com.fasterxml.jackson.core.JsonProcessingException;
+
+import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.CqlSessionBuilder;
+import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
+import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
+import com.datastax.oss.driver.api.core.config.ProgrammaticDriverConfigLoaderBuilder;
+import com.datastax.oss.driver.api.core.type.codec.registry.MutableCodecRegistry;
+import com.datastax.oss.driver.internal.core.loadbalancing.DcInferringLoadBalancingPolicy;
+import com.datastax.oss.driver.internal.core.ssl.DefaultSslEngineFactory;
+import com.datastax.oss.driver.internal.core.type.codec.registry.DefaultCodecRegistry;
 import io.connect.scylladb.codec.ConvenienceCodecs;
 import io.connect.scylladb.codec.StringDurationCodec;
 import io.connect.scylladb.codec.StringInetCodec;
 import io.connect.scylladb.codec.StringTimeUuidCodec;
 import io.connect.scylladb.codec.StringUuidCodec;
 import io.connect.scylladb.codec.StringVarintCodec;
-import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLException;
-import javax.net.ssl.TrustManagerFactory;
-import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.util.Arrays;
 
 public class ScyllaDbSessionFactory {
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSessionFactory.class);
-  private static final CodecRegistry CODEC_REGISTRY = CodecRegistry.DEFAULT_INSTANCE;
+  private static final MutableCodecRegistry CODEC_REGISTRY = new DefaultCodecRegistry("ScyllaDbSessionFactory.CodecRegistry");
 
   static {
     // Register custom codec once at class loading time; duplicates will be logged via warning
@@ -48,121 +44,83 @@ public class ScyllaDbSessionFactory {
     CODEC_REGISTRY.register(StringInetCodec.INSTANCE);
     CODEC_REGISTRY.register(StringVarintCodec.INSTANCE);
     CODEC_REGISTRY.register(StringDurationCodec.INSTANCE);
-    CODEC_REGISTRY.register(SimpleDateCodec.instance);
     CODEC_REGISTRY.register(ConvenienceCodecs.ALL_INSTANCES);
   }
 
   public ScyllaDbSession newSession(ScyllaDbSinkConnectorConfig config) {
-    Cluster.Builder clusterBuilder = Cluster.builder()
-        .withProtocolVersion(ProtocolVersion.DEFAULT)
-        .withCodecRegistry(CODEC_REGISTRY);
 
+    ProgrammaticDriverConfigLoaderBuilder driverConfigLoaderBuilder = DriverConfigLoader.programmaticBuilder();
+    CqlSessionBuilder sessionBuilder = CqlSession.builder().withCodecRegistry(CODEC_REGISTRY);
     try {
-      configureAddressTranslator(config, clusterBuilder);
+      configureAddressTranslator(config, sessionBuilder, driverConfigLoaderBuilder);
     } catch (JsonProcessingException e) {
       log.info("Failed to configure address translator, provide a valid JSON string " +
               "with external network address and port mapped to private network " +
               "address and port.");
-      configurePublicContactPoints(config, clusterBuilder);
+      configurePublicContactPoints(config, sessionBuilder);
     }
 
+    driverConfigLoaderBuilder.withClass(DefaultDriverOption.LOAD_BALANCING_POLICY_CLASS, DcInferringLoadBalancingPolicy.class);
     if (!config.loadBalancingLocalDc.isEmpty()) {
-      clusterBuilder.withLoadBalancingPolicy(
-              DCAwareRoundRobinPolicy.builder()
-                  .withLocalDc(config.loadBalancingLocalDc).build());
+      sessionBuilder.withLocalDatacenter(config.loadBalancingLocalDc);
     } else {
       log.warn("`scylladb.loadbalancing.localdc` has not been configured, "
               + "which is recommended configuration in case of more than one DC.");
     }
     if (config.securityEnabled) {
-      clusterBuilder.withCredentials(config.username, config.password);
+      sessionBuilder.withAuthCredentials(config.username, config.password);
     }
+
     if (config.sslEnabled) {
-      final SslContextBuilder sslContextBuilder = SslContextBuilder.forClient();
-      sslContextBuilder.sslProvider(config.sslProvider);
+      driverConfigLoaderBuilder
+          .withClass(DefaultDriverOption.SSL_ENGINE_FACTORY_CLASS, DefaultSslEngineFactory.class)
+          .withBoolean(DefaultDriverOption.SSL_HOSTNAME_VALIDATION, config.sslHostnameVerificationEnabled);
 
       if (null != config.trustStorePath) {
-        log.info("Configuring SSLContext to use Truststore {}", config.trustStorePath);
-        final KeyStore trustKeyStore = createKeyStore(config.trustStorePath, config.trustStorePassword);
-
-        final TrustManagerFactory trustManagerFactory;
-        try {
-          trustManagerFactory =
-              TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-          trustManagerFactory.init(trustKeyStore);
-        } catch (NoSuchAlgorithmException e) {
-          throw new ConnectException("Exception while creating TrustManagerFactory", e);
-        } catch (KeyStoreException e) {
-          throw new ConnectException("Exception while calling TrustManagerFactory.init()", e);
-        }
-        sslContextBuilder.trustManager(trustManagerFactory);
+        log.info("Configuring Driver ({}) to use Truststore {}", DefaultDriverOption.SSL_TRUSTSTORE_PATH.getPath(), config.trustStorePath);
+        driverConfigLoaderBuilder
+            .withString(DefaultDriverOption.SSL_TRUSTSTORE_PATH, config.trustStorePath.getAbsolutePath())
+            .withString(DefaultDriverOption.SSL_TRUSTSTORE_PASSWORD, String.valueOf(config.trustStorePassword));
       }
 
       if (null != config.keyStorePath) {
-        log.info("Configuring SSLContext to use Keystore {}", config.keyStorePath);
-        final KeyStore keyStore = createKeyStore(config.keyStorePath, config.keyStorePassword);
-
-        final KeyManagerFactory keyManagerFactory;
-        try {
-          keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-          keyManagerFactory.init(keyStore, config.keyStorePassword);
-        } catch (NoSuchAlgorithmException e) {
-          throw new ConnectException("Exception while creating KeyManagerFactory", e);
-        } catch (UnrecoverableKeyException | KeyStoreException e) {
-          throw new ConnectException("Exception while calling KeyManagerFactory.init()", e);
-        }
-        sslContextBuilder.keyManager(keyManagerFactory);
+        log.info("Configuring Driver ({}) to use Keystore {}", DefaultDriverOption.SSL_KEYSTORE_PATH.getPath(), config.keyStorePath);
+        driverConfigLoaderBuilder
+            .withString(DefaultDriverOption.SSL_KEYSTORE_PATH, config.keyStorePath.getAbsolutePath())
+            .withString(DefaultDriverOption.SSL_KEYSTORE_PASSWORD, String.valueOf(config.keyStorePassword));
       }
 
       if (config.cipherSuites.size() > 0) {
-        sslContextBuilder.ciphers(config.cipherSuites);
+        driverConfigLoaderBuilder
+            .withStringList(DefaultDriverOption.SSL_CIPHER_SUITES, config.cipherSuites);
       }
-
-      if (config.certFilePath != null && config.privateKeyPath != null) {
-        try {
-          sslContextBuilder.keyManager(new BufferedInputStream(new FileInputStream(config.certFilePath)),
-                  new BufferedInputStream(new FileInputStream(config.privateKeyPath)));
-        }
-        catch (IllegalArgumentException e) {
-          throw new ConnectException(String.format("Invalid certificate or private key: %s", e.getMessage()));
-        } catch (FileNotFoundException e) {
-          throw new ConnectException("Invalid certificate or private key file path", e);
-        }
-      } else if (config.certFilePath == null != (config.privateKeyPath == null)) {
-        throw new ConnectException(String.format("%s cannot be set without %s and vice-versa: %s is not set",
-                "scylladb.ssl.openssl.keyCertChain", "scylladb.ssl.openssl.privateKey",
-                (config.certFilePath == null) ? "scylladb.ssl.openssl.keyCertChain" : "scylladb.ssl.openssl.privateKey"));
-      }
-
-      final SslContext context;
-      try {
-        context = sslContextBuilder.build();
-      } catch (SSLException e) {
-        throw new ConnectException(e);
-      }
-      final SSLOptions sslOptions = new RemoteEndpointAwareNettySSLOptions(context);
-      clusterBuilder.withSSL(sslOptions);
     }
-    clusterBuilder.withCompression(config.compression);
-    Cluster cluster = clusterBuilder.build();
+
+    driverConfigLoaderBuilder.withString(DefaultDriverOption.PROTOCOL_COMPRESSION, config.compression);
+
     log.info("Creating session");
-    final Session session = cluster.connect();
-    return new ScyllaDbSessionImpl(config, cluster, session);
+    sessionBuilder.withConfigLoader(driverConfigLoaderBuilder.build());
+    final CqlSession session = sessionBuilder.build();
+    return new ScyllaDbSessionImpl(config, session);
   }
 
-  private void configurePublicContactPoints(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) {
+  private void configurePublicContactPoints(ScyllaDbSinkConnectorConfig config, CqlSessionBuilder sessionBuilder) {
     log.info("Configuring public contact points={}", config.contactPoints);
     String[] contactPointsArray = config.contactPoints.split(",");
-    clusterBuilder.withPort(config.port)
-            .addContactPoints(contactPointsArray);
+    for (String contactPoint : contactPointsArray) {
+      if (contactPoint == null) {
+        throw new NullPointerException("One of provided contact points is null");
+      }
+      sessionBuilder.addContactPoint(new InetSocketAddress(contactPoint, config.port));
+    }
   }
 
-  private void configureAddressTranslator(ScyllaDbSinkConnectorConfig config, Cluster.Builder clusterBuilder) throws JsonProcessingException {
+  private void configureAddressTranslator(ScyllaDbSinkConnectorConfig config, CqlSessionBuilder sessionBuilder, ProgrammaticDriverConfigLoaderBuilder configBuilder) throws JsonProcessingException {
     log.info("Trying to configure address translator for private network address and port.");
     ClusterAddressTranslator translator = new ClusterAddressTranslator();
     translator.setMap(config.contactPoints);
-    clusterBuilder.addContactPointsWithPorts(translator.getContactPoints())
-            .withAddressTranslator(translator);
+    sessionBuilder.addContactPoints(translator.getContactPoints());
+    configBuilder.withClass(DefaultDriverOption.ADDRESS_TRANSLATOR_CLASS, ClusterAddressTranslator.class);
   }
 
   private KeyStore createKeyStore(File path, char[] password) {

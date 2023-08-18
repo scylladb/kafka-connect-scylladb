@@ -1,23 +1,28 @@
 package io.connect.scylladb;
 
-import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.Metadata;
-import com.datastax.driver.core.SchemaChangeListenerBase;
-import com.datastax.driver.core.Statement;
-import com.datastax.driver.core.schemabuilder.Alter;
-import com.datastax.driver.core.schemabuilder.Create;
-import com.datastax.driver.core.schemabuilder.SchemaBuilder;
-import com.datastax.driver.core.schemabuilder.TableOptions;
-import com.google.common.base.Joiner;
-import com.google.common.base.MoreObjects;
-import com.google.common.base.Preconditions;
-import com.google.common.base.Strings;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.collect.ComparisonChain;
+import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.metadata.schema.SchemaChangeListenerBase;
+import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.api.core.type.DataTypes;
+import static com.datastax.oss.driver.api.querybuilder.QueryBuilder.*;
+import static com.datastax.oss.driver.api.querybuilder.SchemaBuilder.*;
+
+import com.datastax.oss.driver.api.querybuilder.schema.AlterTableAddColumnEnd;
+import com.datastax.oss.driver.api.querybuilder.schema.AlterTableStart;
+import com.datastax.oss.driver.api.querybuilder.schema.AlterTableWithOptionsEnd;
+import com.datastax.oss.driver.api.querybuilder.schema.CreateTable;
+import com.datastax.oss.driver.api.querybuilder.schema.CreateTableStart;
+import com.datastax.oss.driver.api.querybuilder.schema.CreateTableWithOptions;
+import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
+import com.datastax.oss.driver.shaded.guava.common.base.MoreObjects;
+import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
+import com.datastax.oss.driver.shaded.guava.common.base.Strings;
+import com.datastax.oss.driver.shaded.guava.common.cache.Cache;
+import com.datastax.oss.driver.shaded.guava.common.cache.CacheBuilder;
+
+import com.datastax.oss.driver.shaded.guava.common.collect.ComparisonChain;
 import io.connect.scylladb.topictotable.TopicConfigs;
 
-import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.connect.data.Date;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.errors.DataException;
@@ -25,6 +30,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -54,8 +60,8 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
   }
 
   @Override
-  public void onTableChanged(com.datastax.driver.core.TableMetadata current, com.datastax.driver.core.TableMetadata previous) {
-    final com.datastax.driver.core.TableMetadata actual;
+  public void onTableUpdated(com.datastax.oss.driver.api.core.metadata.schema.TableMetadata current, com.datastax.oss.driver.api.core.metadata.schema.TableMetadata previous) {
+    final com.datastax.oss.driver.api.core.metadata.schema.TableMetadata actual;
     if (null != current) {
       actual = current;
     } else if (null != previous) {
@@ -65,13 +71,13 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
     }
 
     if (null != actual) {
-      final String keyspace = actual.getKeyspace().getName();
+      final String keyspace = actual.getKeyspace().toString();
       if (this.config.keyspace.equalsIgnoreCase(keyspace)) {
         ScyllaDbSchemaKey key =
-            ScyllaDbSchemaKey.of(actual.getKeyspace().getName(), actual.getName());
+            ScyllaDbSchemaKey.of(actual.getKeyspace().toString(), actual.getName().toString());
         log.info("onTableChanged() - {} changed. Invalidating...", key);
         this.schemaLookup.invalidate(key);
-        this.session.onTableChanged(actual.getKeyspace().getName(), actual.getName());
+        this.session.onTableChanged(actual.getKeyspace().toString(), actual.getName().toString());
       }
     }
   }
@@ -80,50 +86,50 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
     final DataType dataType;
 
     if (Timestamp.LOGICAL_NAME.equals(schema.name())) {
-      dataType = DataType.timestamp();
+      dataType = DataTypes.TIMESTAMP;
     } else if (Time.LOGICAL_NAME.equals(schema.name())) {
-      dataType = DataType.time();
+      dataType = DataTypes.TIME;
     } else if (Date.LOGICAL_NAME.equals(schema.name())) {
-      dataType = DataType.date();
+      dataType = DataTypes.DATE;
     } else if (Decimal.LOGICAL_NAME.equals(schema.name())) {
-      dataType = DataType.decimal();
+      dataType = DataTypes.DECIMAL;
     } else {
       switch (schema.type()) {
         case MAP:
           final DataType mapKeyType = dataType(schema.keySchema());
           final DataType mapValueType = dataType(schema.valueSchema());
-          dataType = DataType.map(mapKeyType, mapValueType);
+          dataType = DataTypes.mapOf(mapKeyType, mapValueType);
           break;
         case ARRAY:
           final DataType listValueType = dataType(schema.valueSchema());
-          dataType = DataType.list(listValueType);
+          dataType = DataTypes.listOf(listValueType);
           break;
         case BOOLEAN:
-          dataType = DataType.cboolean();
+          dataType = DataTypes.BOOLEAN;
           break;
         case BYTES:
-          dataType = DataType.blob();
+          dataType = DataTypes.BLOB;
           break;
         case FLOAT32:
-          dataType = DataType.cfloat();
+          dataType = DataTypes.FLOAT;
           break;
         case FLOAT64:
-          dataType = DataType.cdouble();
+          dataType = DataTypes.DOUBLE;
           break;
         case INT8:
-          dataType = DataType.tinyint();
+          dataType = DataTypes.TINYINT;
           break;
         case INT16:
-          dataType = DataType.smallint();
+          dataType = DataTypes.SMALLINT;
           break;
         case INT32:
-          dataType = DataType.cint();
+          dataType = DataTypes.INT;
           break;
         case INT64:
-          dataType = DataType.bigint();
+          dataType = DataTypes.BIGINT;
           break;
         case STRING:
-          dataType = DataType.varchar();
+          dataType = DataTypes.TEXT;
           break;
         default:
           throw new DataException(
@@ -167,7 +173,8 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
         if (null == columnMetadata) {
           log.debug("alter for mapping() - Adding column '{}'", columnName);
           final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-          addedColumns.put(Metadata.quoteIfNecessary(columnName), dataType);
+          addedColumns.put(CqlIdentifier.fromInternal(columnName).asCql(true), dataType);
+
         } else {
           log.trace("alter for mapping() - Table already has '{}' column.", columnName);
         }
@@ -180,7 +187,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
         if (null == columnMetadata) {
           log.debug("alter() - Adding column '{}'", field.name());
           DataType dataType = dataType(field.schema());
-          addedColumns.put(Metadata.quoteIfNecessary(field.name()), dataType);
+          addedColumns.put(CqlIdentifier.fromInternal(field.name()).asCql(true), dataType);
         } else {
           log.trace("alter() - Table already has '{}' column.", field.name());
         }
@@ -194,10 +201,10 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
      */
 
     if (!addedColumns.isEmpty()) {
-      final Alter alterTable = SchemaBuilder.alterTable(this.config.keyspace, tableName);
+      final AlterTableStart alterTable = alterTable(this.config.keyspace, tableName);
       if (!this.config.tableManageEnabled) {
         List<String> requiredAlterStatements = addedColumns.entrySet().stream()
-                .map(e -> alterTable.addColumn(e.getKey()).type(e.getValue()).toString())
+                .map(e -> alterTable.addColumn(e.getKey(), e.getValue()).asCql())
                 .collect(Collectors.toList());
 
         throw new DataException(
@@ -208,14 +215,20 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
                 )
         );
       } else {
-        String query = alterTable.withOptions()
-                .compressionOptions(config.tableCompressionAlgorithm).buildInternal();
+        AlterTableWithOptionsEnd alterTableWithOptionsEnd = null;
+        if (config.tableCompressionAlgorithm.equals("none")) {
+          alterTableWithOptionsEnd = alterTable.withNoCompression();
+        }
+        else {
+          alterTableWithOptionsEnd = alterTable.withCompression(config.tableCompressionAlgorithm);
+        }
+        String query = alterTableWithOptionsEnd.asCql();
         this.session.executeQuery(query);
         for (Map.Entry<String, DataType> e : addedColumns.entrySet()) {
           final String columnName = e.getKey();
           final DataType dataType = e.getValue();
-          final Statement alterStatement = alterTable.addColumn(columnName).type(dataType);
-          this.session.executeStatement(alterStatement);
+          final AlterTableAddColumnEnd alterStatement = alterTable.addColumn(columnName, dataType);
+          this.session.executeStatement(alterStatement.build());
         }
         this.session.onTableChanged(this.config.keyspace, tableName);
       }
@@ -305,46 +318,68 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       }
     }
 
-    Create create = SchemaBuilder.createTable(this.config.keyspace, tableName);
-    final TableOptions<?> tableOptions = create.withOptions();
-    if (!Strings.isNullOrEmpty(valueSchema.doc())) {
-      tableOptions.comment(valueSchema.doc());
-    }
+    CreateTableStart createStart = createTable(this.config.keyspace, tableName);
+    CreateTable create = null;
+
     if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTablePartitionKeyMap().entrySet()) {
         final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-        final String columnName = Metadata.quoteIfNecessary(entry.getValue().getScyllaColumnName());
-        create.addPartitionKey(columnName, dataType);
+        final String columnName = CqlIdentifier.fromInternal(entry.getValue().getScyllaColumnName()).asCql(true);
+        if (create == null) {
+          create = createStart.withPartitionKey(columnName, dataType);
+        }
+        else {
+          create = create.withPartitionKey(columnName, dataType);
+        }
       }
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTableColumnMap().entrySet()) {
         final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-        final String columnName = Metadata.quoteIfNecessary(entry.getValue().getScyllaColumnName());
-        create.addColumn(columnName, dataType);
+        final String columnName = CqlIdentifier.fromInternal(entry.getValue().getScyllaColumnName()).asCql(true);
+        create = create.withColumn(columnName, dataType);
       }
     } else {
       Set<String> fields = new HashSet<>();
       for (final Field keyField : keySchema.fields()) {
         final DataType dataType = dataType(keyField.schema());
-        final String columnName = Metadata.quoteIfNecessary(keyField.name());
-        create.addPartitionKey(columnName, dataType);
+        final String columnName = CqlIdentifier.fromInternal(keyField.name()).asCql(true);
+        if (create == null) {
+          create = createStart.withPartitionKey(columnName, dataType);
+        }
+        else {
+          create = create.withPartitionKey(columnName, dataType);
+        }
         fields.add(columnName);
       }
 
       for (final Field valueField : valueSchema.fields()) {
-        final String columnName = Metadata.quoteIfNecessary(valueField.name());
+        final String columnName = CqlIdentifier.fromInternal(valueField.name()).asCql(true);
         final DataType dataType = dataType(valueField.schema());
         if (fields.contains(columnName)) {
           log.trace("create() - Skipping '{}' because it's already in the key.", valueField.name());
           continue;
         }
-        create.addColumn(columnName, dataType);
+        create = create.withColumn(columnName, dataType);
       }
     }
 
+    CreateTableWithOptions createWithOptions;
+
+    if (!Strings.isNullOrEmpty(valueSchema.doc())) {
+      createWithOptions = create.withComment(valueSchema.doc());
+    } else {
+      createWithOptions = create.withComment("Record valueSchema.doc() was null or empty");
+    }
+
+
     if (this.config.tableManageEnabled) {
-      tableOptions.compressionOptions(config.tableCompressionAlgorithm).buildInternal();
-      log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, tableOptions);
-      session.executeStatement(tableOptions);
+      if (config.tableCompressionAlgorithm.equals("none")) {
+        createWithOptions = createWithOptions.withNoCompression();
+      }
+      else {
+        createWithOptions = createWithOptions.withCompression(config.tableCompressionAlgorithm);
+      }
+      log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, Arrays.toString(createWithOptions.getOptions().entrySet().toArray()));
+      session.executeStatement(createWithOptions.build());
     } else {
       throw new DataException(
               String.format("Create statement needed:\n%s", create)

@@ -23,8 +23,6 @@
 
 package io.connect.scylladb;
 
-import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.policies.AddressTranslator;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.Collections;
@@ -32,6 +30,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
+import com.datastax.oss.driver.api.core.addresstranslation.AddressTranslator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,10 +41,6 @@ class ClusterAddressTranslator implements AddressTranslator {
 
     public Map<InetSocketAddress, InetSocketAddress> addressMap = new HashMap<>();
     private static final Logger log = LoggerFactory.getLogger(ClusterAddressTranslator.class);
-
-    @Override
-    public void init(Cluster cluster) {
-    }
 
     public void setMap(String addressMapString) throws JsonProcessingException {
         ObjectMapper objectMapper = new ObjectMapper();

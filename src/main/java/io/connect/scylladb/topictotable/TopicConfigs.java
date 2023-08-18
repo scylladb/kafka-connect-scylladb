@@ -1,8 +1,9 @@
 package io.connect.scylladb.topictotable;
 
-import com.datastax.driver.core.ConsistencyLevel;
-import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
+import com.datastax.oss.driver.api.core.ConsistencyLevel;
+import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
+import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
+import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -59,7 +60,7 @@ public class TopicConfigs {
         this.ttl = Integer.parseInt(configsMapForTheTopic.get("ttlSeconds"));
       }
       if (configsMapForTheTopic.containsKey("consistencyLevel")) {
-        this.consistencyLevel = ConsistencyLevel.valueOf(configsMapForTheTopic.get("consistencyLevel"));
+        this.consistencyLevel = DefaultConsistencyLevel.valueOf(configsMapForTheTopic.get("consistencyLevel"));
       }
     } catch (NumberFormatException e) {
       throw new DataException(
@@ -68,7 +69,7 @@ public class TopicConfigs {
     } catch (IllegalArgumentException e) {
       throw  new DataException(
               String.format("%s is not a valid value for consistencyLevel. Valid values are %s",
-                      configsMapForTheTopic.get("consistencyLevel"), Arrays.toString(ConsistencyLevel.values()))
+                      configsMapForTheTopic.get("consistencyLevel"), Arrays.toString(DefaultConsistencyLevel.values()))
       );
     }
   }
