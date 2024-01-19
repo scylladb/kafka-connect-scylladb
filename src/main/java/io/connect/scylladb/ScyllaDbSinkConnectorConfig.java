@@ -25,6 +25,8 @@ import io.confluent.kafka.connect.utils.config.ConfigUtils;
 import io.confluent.kafka.connect.utils.config.ValidEnum;
 import io.confluent.kafka.connect.utils.config.ValidPort;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Configuration class for {@link ScyllaDbSinkConnector}.
@@ -61,6 +63,10 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
+
+  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {".mapping",".consistencyLevel",".ttlSeconds",".deletesEnabled"};
+
+  private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);
 
   static final Set<String> CLIENT_COMPRESSION = ImmutableSet.of("none", "lz4", "snappy");
 
@@ -111,8 +117,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
     for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
       final String name2 = entry.getKey();
-      if (name2.startsWith("topic.")) {
+      if (name2.startsWith("topic.") && hasTopicWiseConfigSuffix(name2)) {
         final String topicName = this.tryMatchTopicName(name2);
+        log.debug("Interpreting " + name2 + " as custom TopicWiseConfig for topic " + topicName);
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
         topicMap.put(name2.split("\\.")[name2.split("\\.").length - 1], entry.getValue());
       }
@@ -565,6 +572,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       return m.group(1);
     }
     throw new IllegalArgumentException("The setting: " + name + " does not match topic.keyspace.table nor topic.codec regular expression pattern");
+  }
+
+  private boolean hasTopicWiseConfigSuffix(final String name) {
+    for (String suffix : TOPIC_WISE_CONFIGS_VALID_SUFFIXES) {
+      if (name.endsWith(suffix)) return true;
+    }
+    return false;
   }
 
   private static String[] toStringArray(Object[] arr){
