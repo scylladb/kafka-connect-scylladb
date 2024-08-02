@@ -91,6 +91,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
         result = new TableMetadataImpl.TableImpl(tableMetadata.get());
         this.tableMetadataCache.put(tableName, result);
       } else {
+        log.warn("Could not find metadata for table {} in keyspace {}. Are you sure the table exists?", tableName, keyspaceMetadata.getName().asCql(false));
         result = null;
       }
     }
