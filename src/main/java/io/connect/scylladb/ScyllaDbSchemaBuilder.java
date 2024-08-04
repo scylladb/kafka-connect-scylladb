@@ -4,7 +4,6 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.metadata.schema.SchemaChangeListenerBase;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
-import static com.datastax.oss.driver.api.querybuilder.QueryBuilder.*;
 import static com.datastax.oss.driver.api.querybuilder.SchemaBuilder.*;
 
 import com.datastax.oss.driver.api.querybuilder.schema.AlterTableAddColumnEnd;
@@ -21,6 +20,7 @@ import com.datastax.oss.driver.shaded.guava.common.cache.Cache;
 import com.datastax.oss.driver.shaded.guava.common.cache.CacheBuilder;
 
 import com.datastax.oss.driver.shaded.guava.common.collect.ComparisonChain;
+import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableMap;
 import io.connect.scylladb.topictotable.TopicConfigs;
 
 import org.apache.kafka.connect.data.Date;
@@ -220,7 +220,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
           alterTableWithOptionsEnd = alterTable.withNoCompression();
         }
         else {
-          alterTableWithOptionsEnd = alterTable.withCompression(config.tableCompressionAlgorithm);
+          alterTableWithOptionsEnd = alterTable.withOption("compression", ImmutableMap.of("sstable_compression", config.tableCompressionAlgorithm));
         }
         String query = alterTableWithOptionsEnd.asCql();
         this.session.executeQuery(query);
@@ -376,7 +376,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
         createWithOptions = createWithOptions.withNoCompression();
       }
       else {
-        createWithOptions = createWithOptions.withCompression(config.tableCompressionAlgorithm);
+        createWithOptions = createWithOptions.withOption("compression", ImmutableMap.of("sstable_compression", config.tableCompressionAlgorithm));
       }
       log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, Arrays.toString(createWithOptions.getOptions().entrySet().toArray()));
       session.executeStatement(createWithOptions.build());
