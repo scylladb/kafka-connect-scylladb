@@ -200,7 +200,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
   public static final String TABLE_CREATE_COMPRESSION_ALGORITHM_CONFIG = "scylladb.table.create.compression.algorithm";
   private static final String TABLE_CREATE_COMPRESSION_ALGORITHM_DOC = "Compression algorithm to use when the table is created. "
-      + "Valid Values are NONE, SNAPPY, LZ4, DEFLATE.";
+      + "Valid Values are SnappyCompressor, LZ4Compressor, DeflateCompressor, none.";
 
 
   public static final String OFFSET_STORAGE_TABLE_CONF = "scylladb.offset.storage.table";
