@@ -30,7 +30,7 @@
         <scylladb.version>4.19.0.1</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <jackson-databind.version>2.13.4.2</jackson-databind.version>
+        <jackson.version>2.15.0</jackson.version>
         <guava.version>24.1.1-jre</guava.version>
 
     </properties>
@@ -194,8 +194,13 @@
         <dependencies>
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
-                <version>${jackson-databind.version}</version>
+                <version>${jackson.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
