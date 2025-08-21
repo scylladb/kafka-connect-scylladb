@@ -17,7 +17,7 @@
         <junit.surefire.plugin.version>1.2.0</junit.surefire.plugin.version>
         <surefire.version>3.0.0-M5</surefire.version>
         <failsafe.version>3.0.0-M5</failsafe.version>
-        <kafka.version>2.4.0</kafka.version>
+        <kafka.version>3.9.1</kafka.version>
         <junit.version>5.2.0</junit.version>
         <scylladb.version>4.19.0.1</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
