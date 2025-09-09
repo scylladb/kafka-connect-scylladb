@@ -14,16 +14,15 @@
         <project.inceptionYear>2020</project.inceptionYear>
         <license.current.year>2020</license.current.year>
         <kafka.connect.maven.plugin.version>0.12.0</kafka.connect.maven.plugin.version>
-        <junit.surefire.plugin.version>1.2.0</junit.surefire.plugin.version>
-        <surefire.version>3.0.0-M5</surefire.version>
-        <failsafe.version>3.0.0-M5</failsafe.version>
-        <kafka.version>2.4.0</kafka.version>
-        <junit.version>5.2.0</junit.version>
+        <surefire.version>3.5.3</surefire.version>
+        <failsafe.version>3.5.3</failsafe.version>
+        <kafka.version>3.9.1</kafka.version>
+        <junit.version>5.13.4</junit.version>
         <scylladb.version>4.19.0.1</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <jackson.version>2.15.0</jackson.version>
-        <guava.version>24.1.1-jre</guava.version>
+        <jackson.version>2.20.0</jackson.version>
+        <guava.version>33.4.8-jre</guava.version>
         <gpg.passphrase/>
         <release.autopublish>false</release.autopublish>
     </properties>
@@ -71,8 +70,8 @@
                 <version>3.5.1</version>
                 <inherited>true</inherited>
                 <configuration>
-                    <source>1.8</source>
-                    <target>1.8</target>
+                    <source>11</source>
+                    <target>11</target>
                 </configuration>
             </plugin>
             <plugin>
@@ -253,7 +252,14 @@
         <dependency>
             <groupId>io.confluent.kafka</groupId>
             <artifactId>connect-utils</artifactId>
-            <version>[0.1.0,0.1.100)</version>
+            <version>0.1.18</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.confluent</groupId>
+            <artifactId>common-utils</artifactId>
+            <version>8.0.0</version>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
@@ -337,14 +343,14 @@
             <groupId>org.lz4</groupId>
             <artifactId>lz4-java</artifactId>
             <!-- should match version from drivers POM -->
-            <version>1.7.1</version>
+            <version>1.8.0</version>
         </dependency>
 
         <dependency>
             <groupId>org.xerial.snappy</groupId>
             <artifactId>snappy-java</artifactId>
             <!-- should match version from drivers POM -->
-            <version>1.1.10.5</version>
+            <version>1.1.10.8</version>
         </dependency>
 
         <dependency>
@@ -360,6 +366,13 @@
             <artifactId>docker-java</artifactId>
             <scope>test</scope>
         </dependency-->
+
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava.version}</version>
+            <scope>test</scope>
+        </dependency>
 
     </dependencies>
 
@@ -484,4 +497,13 @@
             <organization>ScyllaDB</organization>
         </developer>
     </developers>
+
+    <repositories>
+        <repository>
+            <id>confluent</id>
+            <url>https://packages.confluent.io/maven/</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
 </project>
