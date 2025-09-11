@@ -6,7 +6,7 @@
     <artifactId>kafka-connect-scylladb</artifactId>
     <name>kafka-connect-scylladb</name>
     <version>1.1.3-SNAPSHOT</version>
-    <description>A Kafka Connect plugin for Scylla Database</description>
+    <description>A Kafka Connect plugin for ScyllaDB</description>
     <url>https://github.com/scylla/kafka-connect-scylladb</url>
     <inceptionYear>2020</inceptionYear>
 
@@ -94,16 +94,34 @@
                             <goal>kafka-connect</goal>
                         </goals>
                         <configuration>
-                            <title>Kafka Connect Scylla Database Connector</title>
-                            <version>${project.version}-preview</version>
+                            <name>kafka-connect-scylladb</name>
+                            <title>ScyllaDB Sink Connector</title>
+                            <documentationUrl>https://github.com/scylladb/kafka-connect-scylladb</documentationUrl>
+                            <description>
+                                ScyllaDB Sink Connector is a source connector capturing kafka events and storing them in Scylla cluster.
+                            </description>
+                            <logo>images/connector.png</logo>
+
                             <ownerUsername>ScyllaDB</ownerUsername>
-                            <ownerName>ScyllaDB.</ownerName>
+                            <ownerUsername>scylladb</ownerUsername>
+                            <ownerName>ScyllaDB</ownerName>
+                            <ownerType>organization</ownerType>
+                            <ownerUrl>https://www.scylladb.com/</ownerUrl>
+                            <ownerLogo>images/scylla.png</ownerLogo>
+
                             <componentTypes>
                                 <componentType>sink</componentType>
                             </componentTypes>
+
                             <tags>
                                 <tag>Scylla Database</tag>
                             </tags>
+
+                            <supportLogo>images/scylla.png</supportLogo>
+                            <supportProviderName>ScyllaDB</supportProviderName>
+                            <supportSummary>Officially supported by ScyllaDB.</supportSummary>
+                            <supportUrl>https://github.com/scylladb/kafka-connect-scylladb</supportUrl>
+
                             <confluentControlCenterIntegration>true</confluentControlCenterIntegration>
                         </configuration>
                     </execution>
