@@ -8,7 +8,7 @@ For simpler step-by-step instructions with environment setup check out [quicksta
 This can be achieved by running multiple instances of the connector.
 
 #### Environment
-Running Kafka cluster and dockerized Scylla (contact point `172.17.0.2`)
+Running Kafka cluster and dockerized ScyllaDB (contact point `172.17.0.2`)
 Test data generated using [Datagen Source Connector](https://www.confluent.io/hub/confluentinc/kafka-connect-datagen)
 with following configuration:
 ```
