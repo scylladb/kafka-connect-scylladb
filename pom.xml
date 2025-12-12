@@ -22,7 +22,7 @@
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
         <jackson.version>2.20.1</jackson.version>
-        <guava.version>33.4.8-jre</guava.version>
+        <guava.version>33.5.0-jre</guava.version>
         <gpg.passphrase/>
         <release.autopublish>false</release.autopublish>
     </properties>
