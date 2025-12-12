@@ -18,7 +18,7 @@
         <failsafe.version>3.5.3</failsafe.version>
         <kafka.version>3.9.1</kafka.version>
         <junit.version>5.13.4</junit.version>
-        <scylladb.version>4.19.0.1</scylladb.version>
+        <scylladb.version>4.19.0.4</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
         <jackson.version>2.20.0</jackson.version>
