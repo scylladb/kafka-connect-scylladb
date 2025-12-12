@@ -361,7 +361,7 @@
             <groupId>org.lz4</groupId>
             <artifactId>lz4-java</artifactId>
             <!-- should match version from drivers POM -->
-            <version>1.8.0</version>
+            <version>1.8.1</version>
         </dependency>
 
         <dependency>
