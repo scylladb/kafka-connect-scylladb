@@ -15,7 +15,7 @@
         <license.current.year>2020</license.current.year>
         <kafka.connect.maven.plugin.version>0.12.0</kafka.connect.maven.plugin.version>
         <surefire.version>3.5.3</surefire.version>
-        <failsafe.version>3.5.3</failsafe.version>
+        <failsafe.version>3.5.4</failsafe.version>
         <kafka.version>3.9.1</kafka.version>
         <junit.version>5.13.4</junit.version>
         <scylladb.version>4.19.0.4</scylladb.version>
