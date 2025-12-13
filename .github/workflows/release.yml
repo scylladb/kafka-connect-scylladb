@@ -89,14 +89,14 @@ jobs:
 
       - name: Upload stdout.log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: maven-stdout
           path: /tmp/logs-stdout.log
 
       - name: Upload stderr.log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: maven-stderr
           path: /tmp/logs-stderr.log
