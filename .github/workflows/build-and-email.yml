@@ -1,0 +1,111 @@
+name: Build and Email Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      email_recipient:
+        description: 'Email recipient for the package'
+        required: false
+        default: 'wojciech.baczkowski@scylladb.com' # just an example for now
+        type: string
+      email_cc:
+        description: 'CC recipients (comma-separated)'
+        required: false
+        default: ''
+        type: string
+      email_bcc:
+        description: 'BCC recipients (comma-separated)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build-and-email:
+    name: Build and Email Package
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Get latest release tag
+        id: latest_tag
+        run: |
+          # Get the latest tag from the repository
+          LATEST_TAG=$(git ls-remote --tags --sort='v:refname' origin | grep -v '\^{}' | tail -n1 | sed 's/.*\///')
+          echo "Latest tag: $LATEST_TAG"
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Checkout latest tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.latest_tag.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Build project
+        run: |
+          mvn clean package -X -B -DskipTests=false
+
+      - name: Verify package exists
+        id: verify_package
+        run: |
+          # Extract version from pom.xml
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          PACKAGE_PATH="target/components/packages/ScyllaDB-kafka-connect-scylladb-${VERSION}-preview.zip"
+          
+          echo "Looking for package at: $PACKAGE_PATH"
+          if [ -f "$PACKAGE_PATH" ]; then
+            echo "Package found!"
+            echo "package_path=$PACKAGE_PATH" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            ls -la "$PACKAGE_PATH"
+          else
+            echo "Package not found. Listing target directory structure:"
+            find target -name "*.zip" -type f
+            exit 1
+          fi
+
+      - name: Send email with package
+        if: success() && steps.verify_package.outputs.package_path != ''
+        # This is not an official github action.
+        # For safety we should review the code, fork it and use the fork.
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "ScyllaDB Kafka Connect Package - Version ${{ steps.verify_package.outputs.version }}"
+          to: ${{ inputs.email_recipient }}
+          from: "GitHub Actions <${{ secrets.EMAIL_USERNAME }}>"
+          cc: ${{ inputs.email_cc }}
+          bcc: ${{ inputs.email_bcc }}
+          body: |
+            Hello,
+
+            Please find attached the ScyllaDB Kafka Connect package built from the latest release tag: ${{ steps.latest_tag.outputs.tag }}
+
+            Package details:
+            - Version: ${{ steps.verify_package.outputs.version }}
+            - Build date: ${{ github.run_id }}
+            - Repository: ${{ github.repository }}
+            
+            This package was automatically built and sent by GitHub Actions.
+
+            Best regards,
+            GitHub Actions Bot
+          attachments: ${{ steps.verify_package.outputs.package_path }}
+
+      # This is optional. Can be used to verify contents if sent directly to recipient outside the company.
+      - name: Upload package as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scylladb-kafka-connect-${{ steps.verify_package.outputs.version }}
+          path: ${{ steps.verify_package.outputs.package_path }}
+          retention-days: 30
