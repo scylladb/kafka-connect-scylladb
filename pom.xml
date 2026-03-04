@@ -12,7 +12,7 @@
 
     <properties>
         <project.inceptionYear>2020</project.inceptionYear>
-        <license.current.year>2020</license.current.year>
+        <license.current.year>2026</license.current.year>
         <kafka.connect.maven.plugin.version>0.12.0</kafka.connect.maven.plugin.version>
         <surefire.version>3.5.4</surefire.version>
         <failsafe.version>3.5.4</failsafe.version>
@@ -21,7 +21,8 @@
         <scylladb.version>4.19.0.4</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <jackson.version>2.20.1</jackson.version>
+        <jackson.version>2.21.1</jackson.version>
+        <jackson-annotations.version>2.21</jackson-annotations.version>
         <guava.version>33.5.0-jre</guava.version>
         <gpg.passphrase />
         <release.autopublish>false</release.autopublish>
@@ -260,6 +261,11 @@
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>${jackson-annotations.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
