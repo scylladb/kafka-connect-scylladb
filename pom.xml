@@ -21,6 +21,7 @@
         <scylladb.version>4.19.0.5</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
+        <netty.version>4.1.133.Final</netty.version>
         <jackson.version>2.21.1</jackson.version>
         <jackson-annotations.version>2.21</jackson-annotations.version>
         <guava.version>33.5.0-jre</guava.version>
@@ -252,6 +253,15 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- CVE-2026-42583: force netty to 4.1.133.Final; remove once scylladb/java-driver
+                 bumps netty.version and a new driver release is consumed here (Stage 3). -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-core</artifactId>
