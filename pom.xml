@@ -22,7 +22,7 @@
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
         <netty.version>4.1.133.Final</netty.version>
-        <jackson.version>2.21.1</jackson.version>
+        <jackson.version>2.21.3</jackson.version>
         <jackson-annotations.version>2.21</jackson-annotations.version>
         <guava.version>33.5.0-jre</guava.version>
         <gpg.passphrase />
