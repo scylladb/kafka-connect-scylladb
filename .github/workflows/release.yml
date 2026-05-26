@@ -106,3 +106,16 @@ jobs:
         run: |
           git status && git log -3
           git push origin --follow-tags -v
+
+      - name: Create GitHub Release
+        if: inputs.dry-run == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_TAG=$(git describe --tags --abbrev=0)
+          VERSION=${RELEASE_TAG#v}
+          gh release create "${RELEASE_TAG}" \
+            "target/checkout/target/kafka-connect-scylladb-${VERSION}.jar" \
+            "target/checkout/target/components/packages/scylladb-kafka-connect-scylladb-${VERSION}.zip" \
+            --title "${VERSION}" \
+            --generate-notes
