@@ -5,7 +5,7 @@
     <groupId>com.scylladb</groupId>
     <artifactId>kafka-connect-scylladb</artifactId>
     <name>kafka-connect-scylladb</name>
-    <version>1.1.5</version>
+    <version>1.1.6-SNAPSHOT</version>
     <description>A Kafka Connect plugin for ScyllaDB</description>
     <url>https://github.com/scylla/kafka-connect-scylladb</url>
     <inceptionYear>2020</inceptionYear>
@@ -497,7 +497,7 @@
         <connection>scm:git:https://github.com/scylladb/kafka-connect-scylladb</connection>
         <developerConnection>scm:git:https://github.com/scylladb/kafka-connect-scylladb</developerConnection>
         <url>https://github.com/scylladb/kafka-connect-scylladb</url>
-        <tag>1.1.5</tag>
+        <tag>HEAD</tag>
     </scm>
 
     <licenses>
