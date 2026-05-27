@@ -108,14 +108,18 @@ jobs:
           git push origin --follow-tags -v
 
       - name: Create GitHub Release
-        if: inputs.dry-run == false
+        if: inputs.dry-run == false && inputs.target-tag == 'master'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           RELEASE_TAG=$(git describe --tags --abbrev=0)
           VERSION=${RELEASE_TAG#v}
-          gh release create "${RELEASE_TAG}" \
-            "target/checkout/target/kafka-connect-scylladb-${VERSION}.jar" \
-            "target/checkout/target/components/packages/scylladb-kafka-connect-scylladb-${VERSION}.zip" \
-            --title "${VERSION}" \
-            --generate-notes
+          JAR="target/checkout/target/kafka-connect-scylladb-${VERSION}.jar"
+          ZIP="target/checkout/target/components/packages/scylladb-kafka-connect-scylladb-${VERSION}.zip"
+          if gh release view "${RELEASE_TAG}" &>/dev/null; then
+            gh release upload "${RELEASE_TAG}" "${JAR}" "${ZIP}" --clobber
+          else
+            gh release create "${RELEASE_TAG}" "${JAR}" "${ZIP}" \
+              --title "${VERSION}" \
+              --generate-notes
+          fi
