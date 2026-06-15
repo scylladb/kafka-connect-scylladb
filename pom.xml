@@ -18,10 +18,9 @@
         <failsafe.version>3.5.6</failsafe.version>
         <kafka.version>3.9.2</kafka.version>
         <junit.version>5.14.4</junit.version>
-        <scylladb.version>4.19.0.9</scylladb.version>
+        <scylladb.version>4.19.2.0</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <netty.version>4.1.135.Final</netty.version>
         <jackson.version>2.21.3</jackson.version>
         <jackson-annotations.version>2.21</jackson-annotations.version>
         <guava.version>33.6.0-jre</guava.version>
@@ -248,16 +247,6 @@
 
     <dependencyManagement>
         <dependencies>
-            <!-- CVE-2026-42583, CVE-2026-44249, CVE-2026-45416: force netty to 4.1.135.Final;
-                 remove once scylladb/java-driver bumps netty.version and a new driver
-                 release is consumed here (Stage 3). -->
-            <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-bom</artifactId>
-                <version>${netty.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-core</artifactId>
@@ -373,7 +362,7 @@
             <groupId>at.yawk.lz4</groupId>
             <artifactId>lz4-java</artifactId>
             <!-- should match version from drivers POM -->
-            <version>1.10.1</version>
+            <version>1.11.0</version>
         </dependency>
 
         <dependency>
