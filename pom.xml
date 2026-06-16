@@ -24,7 +24,7 @@
         <netty.version>4.1.135.Final</netty.version>
         <jackson.version>2.21.3</jackson.version>
         <jackson-annotations.version>2.21</jackson-annotations.version>
-        <guava.version>33.5.0-jre</guava.version>
+        <guava.version>33.6.0-jre</guava.version>
         <gpg.passphrase />
         <release.autopublish>false</release.autopublish>
     </properties>
