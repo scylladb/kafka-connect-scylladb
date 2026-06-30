@@ -21,8 +21,8 @@
         <scylladb.version>4.19.2.0</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <jackson.version>2.21.4</jackson.version>
-        <jackson-annotations.version>2.21</jackson-annotations.version>
+        <jackson.version>2.22.0</jackson.version>
+        <jackson-annotations.version>2.22</jackson-annotations.version>
         <guava.version>33.6.0-jre</guava.version>
         <gpg.passphrase />
         <release.autopublish>false</release.autopublish>
