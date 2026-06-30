@@ -53,7 +53,7 @@ public class ScyllaDbSinkConnector extends SinkConnector {
         CreateKeyspace createKeyspace = SchemaBuilder.createKeyspace(config.keyspace)
                 .ifNotExists()
                 .withReplicationOptions(ImmutableMap.of(
-                "class", (Object) "SimpleStrategy",
+                "class", (Object) "NetworkTopologyStrategy",
                 "replication_factor", config.keyspaceReplicationFactor
                   ))
             .withDurableWrites(true);
