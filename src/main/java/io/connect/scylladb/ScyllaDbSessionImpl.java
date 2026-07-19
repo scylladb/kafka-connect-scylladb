@@ -184,7 +184,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     log.debug("insert() - Preparing statement. '{}'", regularInsert.asCql());
     if (topicConfigs != null) {
       return (topicConfigs.getTtl() == null) ? session.prepare(regularInsert.build()) :
-              session.prepare(regularInsert.usingTtl(topicConfigs.getTtl()).build());
+              session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker("__ttl")).build());
     } else {
       return (config.ttl == null) ? session.prepare(regularInsert.build()) :
               session.prepare(regularInsert.usingTtl(config.ttl).build());
@@ -193,11 +193,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
   @Override
   public RecordToBoundStatementConverter insert(String keyspace, String tableName, TopicConfigs topicConfigs) {
-    if (topicConfigs != null && topicConfigs.getTtl() != null) {
-      PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, topicConfigs);
-      return new RecordToBoundStatementConverter(preparedStatement);
-    } else {
-      return this.insertStatementCache.computeIfAbsent(
+    return this.insertStatementCache.computeIfAbsent(
               ScyllaDbSchemaKey.of(keyspace, tableName),
               new Function<ScyllaDbSchemaKey, RecordToBoundStatementConverter>() {
                 @Override
@@ -207,7 +203,6 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
                 }
               }
       );
-    }
   }
 
   private PreparedStatement offsetPreparedStatement;

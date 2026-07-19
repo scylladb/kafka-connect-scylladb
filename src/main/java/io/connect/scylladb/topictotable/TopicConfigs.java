@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,8 @@ public class TopicConfigs {
   private ConsistencyLevel consistencyLevel = null;
   private String ttlMappedField;
   private Integer ttl;
+  private String expirationMappedField;
+  private int expirationOffsetSeconds;
   private String timeStampMappedField;
   private final WriteTimestamp writeTimestamp;
   private final DeleteFlag deleteFlag;
@@ -96,13 +99,18 @@ public class TopicConfigs {
       if (configsMapForTheTopic.containsKey("ttlSeconds")) {
         this.ttl = Integer.parseInt(configsMapForTheTopic.get("ttlSeconds"));
       }
+      if (configsMapForTheTopic.containsKey("expirationOffsetSeconds")) {
+        this.expirationOffsetSeconds = Integer.parseInt(configsMapForTheTopic.get("expirationOffsetSeconds"));
+        if (this.expirationOffsetSeconds < 0) {
+          throw new DataException("The setting expirationOffsetSeconds must not be negative.");
+        }
+      }
       if (configsMapForTheTopic.containsKey("consistencyLevel")) {
         this.consistencyLevel = DefaultConsistencyLevel.valueOf(configsMapForTheTopic.get("consistencyLevel"));
       }
     } catch (NumberFormatException e) {
       throw new DataException(
-              String.format("The setting ttlSeconds must be of type Integer. %s is not a supported type",
-                      configsMapForTheTopic.get("ttlSeconds").getClass().getName()));
+              "The settings ttlSeconds and expirationOffsetSeconds must be integers.", e);
     } catch (IllegalArgumentException e) {
       throw  new DataException(
               String.format("%s is not a valid value for consistencyLevel. Valid values are %s",
@@ -123,37 +131,43 @@ public class TopicConfigs {
     // and a flagged delete's value need not carry the written fields. The first write completes
     // the mapping.
     for (String mappedEntry : this.mappingStringForTopic.split(",")) {
-      String[] columnNameMap = mappedEntry.split("=");
-      String recordField = columnNameMap[1].split("\\.").length > 0
-              ? columnNameMap[1].split("\\.")[1] : "";
+      String[] columnNameMap = mappedEntry.trim().split("=", 2);
+      if (columnNameMap.length != 2) {
+        throw new DataException("Each mapping entry must have the form column=key.field, column=value.field or column=header.field.");
+      }
+      String recordFieldMapping = columnNameMap[1].trim();
+      String[] recordFieldParts = recordFieldMapping.split("\\.", 2);
+      String recordField = recordFieldParts.length == 2 ? recordFieldParts[1] : "";
       String scyllaColumnName = columnNameMap[0].trim();
-      if (delete && !columnNameMap[1].startsWith("key.")) {
+      if (delete && !recordFieldMapping.startsWith("key.")) {
         // The deprecated __timestamp mapping stamps deletes too, and needs no value schema.
-        if (scyllaColumnName.equals("__timestamp") && columnNameMap[1].startsWith("value.")) {
+        if (scyllaColumnName.equals("__timestamp") && recordFieldMapping.startsWith("value.")) {
           timeStampMappedField = recordField;
         }
         continue;
       }
       KafkaScyllaColumnMapper kafkaScyllaColumnMapper = new KafkaScyllaColumnMapper(scyllaColumnName);
-      if (columnNameMap[1].startsWith("key.")) {
+      if (recordFieldMapping.startsWith("key.")) {
         if (record.keySchema() != null) {
           kafkaScyllaColumnMapper.kafkaRecordField = getFiledForNameFromSchema(record.keySchema(), recordField, "record.keySchema()");
         }
         this.tablePartitionKeyMap.put(recordField, kafkaScyllaColumnMapper);
-      } else if (columnNameMap[1].startsWith("value.")) {
+      } else if (recordFieldMapping.startsWith("value.")) {
         Field valueField = null;
         if (record.valueSchema() != null) {
           valueField = getFiledForNameFromSchema(record.valueSchema(), recordField, "record.valueSchema()");
         }
         if (scyllaColumnName.equals("__ttl")) {
           ttlMappedField = recordField;
+        } else if (scyllaColumnName.equals("__expiration")) {
+          expirationMappedField = recordField;
         } else if (scyllaColumnName.equals("__timestamp")) {
           timeStampMappedField = recordField;
         } else {
           kafkaScyllaColumnMapper.kafkaRecordField = valueField;
           this.tableColumnMap.put(recordField, kafkaScyllaColumnMapper);
         }
-      } else if (columnNameMap[1].startsWith("header.")) {
+      } else if (recordFieldMapping.startsWith("header.")) {
         int index = 0;
         for (Header header : record.headers()) {
           if (header.key().equals(recordField)) {
@@ -170,6 +184,9 @@ public class TopicConfigs {
       } else {
         throw new IllegalArgumentException("field name must start with 'key.', 'value.' or 'header.'.");
       }
+    }
+    if (ttlMappedField != null && expirationMappedField != null) {
+      throw new DataException("A mapping cannot contain both __ttl and __expiration.");
     }
     this.isScyllaColumnsMapped = !delete;
   }
@@ -195,6 +212,10 @@ public class TopicConfigs {
   }
 
   public void setTtlIfAvailable(SinkRecord record) {
+    setTtlIfAvailable(record, System.currentTimeMillis());
+  }
+
+  void setTtlIfAvailable(SinkRecord record, long currentTimeMillis) {
     // Tombstones carry no value, so value-mapped fields cannot apply to them.
     if (record.value() == null) {
       return;
@@ -209,6 +230,43 @@ public class TopicConfigs {
                         ttlMappedField, ttlValue.getClass().getName()
                 ));
       }
+    } else if (expirationMappedField != null) {
+      Object expirationValue = getValueOfField(record.value(), expirationMappedField);
+      final long expirationTimeMillis;
+      if (expirationValue instanceof Date) {
+        expirationTimeMillis = ((Date) expirationValue).getTime();
+      } else if (expirationValue instanceof Long) {
+        expirationTimeMillis = (Long) expirationValue;
+      } else {
+        throw new DataException(
+                String.format("Expiration should be a Kafka Timestamp or epoch-millisecond Long. "
+                                + "But record provided for %s is of type %s",
+                        expirationMappedField,
+                        expirationValue == null ? "null" : expirationValue.getClass().getName()));
+      }
+
+      final long expiresAtMillis;
+      try {
+        expiresAtMillis = Math.addExact(
+                expirationTimeMillis,
+                Math.multiplyExact((long) expirationOffsetSeconds, 1000L));
+      } catch (ArithmeticException e) {
+        throw new DataException("Expiration timestamp plus expirationOffsetSeconds is outside the supported range.", e);
+      }
+      final long remainingMillis;
+      try {
+        remainingMillis = Math.subtractExact(expiresAtMillis, currentTimeMillis);
+      } catch (ArithmeticException e) {
+        throw new DataException("Calculated expiration interval is outside the supported range.", e);
+      }
+      if (remainingMillis <= 0) {
+        throw new DataException("Expiration timestamp plus expirationOffsetSeconds must be in the future.");
+      }
+      long ttlSeconds = Math.floorDiv(remainingMillis - 1, 1000) + 1;
+      if (ttlSeconds > Integer.MAX_VALUE) {
+        throw new DataException("Calculated TTL exceeds the maximum supported integer value.");
+      }
+      this.ttl = (int) ttlSeconds;
     }
   }
 
