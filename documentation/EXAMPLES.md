@@ -2,6 +2,26 @@
 Below are examples of non-trivial connector configurations.   
 For simpler step-by-step instructions with environment setup check out [quickstart](QUICKSTART.md) first.
 
+## Expire records after a validity date
+
+The following mapping uses the ``validUntil`` field as an absolute expiration timestamp and keeps each record for one
+additional day. ``validUntil`` can be a Kafka Timestamp or a Long Unix epoch timestamp in milliseconds.
+
+```
+topics = events
+scylladb.keyspace = example_ks
+topic.events.example_ks.events.mapping = id=key.id, payload=value.payload, __expiration=value.validUntil
+topic.events.example_ks.events.expirationOffsetSeconds = 86400
+```
+
+At insert time the connector calculates:
+
+```
+TTL = ceil((validUntil + 86400 seconds - current time) / 1 second)
+```
+
+Records whose resulting expiration time is not in the future are handled according to ``behavior.on.error``.
+
 
 ## One topic to many tables
 
