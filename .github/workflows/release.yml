@@ -25,6 +25,7 @@ jobs:
 
     permissions:
       contents: write
+      issues: write
 
     env:
       MVNCMD: mvn -B -X -ntp
@@ -123,3 +124,84 @@ jobs:
               --title "${VERSION}" \
               --generate-notes
           fi
+
+      # Every step below is continue-on-error: a bounced email must not turn a
+      # published release red, because a red release invites a re-run, and
+      # re-running this single-job workflow calls mvn release:prepare again and
+      # cuts a spurious version.
+      - name: Extract release version
+        id: extract-version
+        if: inputs.dry-run == false && inputs.target-tag == 'master'
+        continue-on-error: true
+        run: |
+          # tagNameFormat is @{project.version}, so the tag *is* the version — no v prefix.
+          RELEASE_VERSION=$(git describe --tags --abbrev=0)
+          # Exported before validation so the fallback issue can quote what was found.
+          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
+          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::warning::unexpected release tag '${RELEASE_VERSION}'; skipping the Confluent email"
+            exit 1
+          fi
+
+      - name: Notify Confluent Hub
+        id: notify-confluent
+        if: inputs.dry-run == false && inputs.target-tag == 'master' && steps.extract-version.outcome == 'success'
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          from: drivers-team-bot@scylladb.com
+          to: confluent-hub@confluent.io
+          cc: drivers-team@scylladb.com
+          subject: "Publish kafka-connect-scylladb ${{ env.RELEASE_VERSION }}"
+          body: |
+            Dear CCET Team,
+
+            Please publish version ${{ env.RELEASE_VERSION }} of kafka-connect-scylladb:
+            https://github.com/scylladb/kafka-connect-scylladb/releases/download/${{ env.RELEASE_VERSION }}/scylladb-kafka-connect-scylladb-${{ env.RELEASE_VERSION }}.zip
+
+            Best regards,
+            Drivers Team at ScyllaDB
+
+      - name: Open fallback issue if Confluent was not notified
+        if: inputs.dry-run == false && inputs.target-tag == 'master' && (steps.extract-version.outcome == 'failure' || steps.notify-confluent.outcome == 'failure')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BODY=$(cat <<EOF
+          The automated notification to Confluent failed during the release of
+          \`${RELEASE_VERSION:-unknown tag}\`
+          ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})).
+          The release itself succeeded — only the email did not go out.
+
+          **Do not re-run the Release workflow.** It would call \`mvn release:prepare\`
+          again and cut an extra version. Send the message below by hand, then close
+          this issue.
+
+          To: confluent-hub@confluent.io
+          CC: drivers-team@scylladb.com
+          Subject: Publish kafka-connect-scylladb ${RELEASE_VERSION}
+
+          Dear CCET Team,
+
+          Please publish version ${RELEASE_VERSION} of kafka-connect-scylladb:
+          https://github.com/scylladb/kafka-connect-scylladb/releases/download/${RELEASE_VERSION}/scylladb-kafka-connect-scylladb-${RELEASE_VERSION}.zip
+
+          Best regards,
+          Drivers Team at ScyllaDB
+          EOF
+          )
+          # Annotate and record before creating the issue: the summary write cannot
+          # fail, so the message survives even when the issue API does not.
+          echo "::warning::Confluent Hub was not notified automatically; see the run summary."
+          printf '%s\n' "$BODY" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --assignee "${GITHUB_ACTOR}" \
+            --title "Manual action: notify Confluent Hub about ${RELEASE_VERSION:-the latest release}" \
+            --body "$BODY"
