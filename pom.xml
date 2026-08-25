@@ -21,7 +21,7 @@
         <scylladb.version>4.19.2.1</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <netty.version>4.1.136.Final</netty.version>
+        <netty.version>4.2.17.Final</netty.version>
         <jackson.version>2.22.2</jackson.version>
         <jackson-annotations.version>2.22</jackson-annotations.version>
         <guava.version>33.7.1-jre</guava.version>
