@@ -48,6 +48,12 @@ This connector provides support for TTL by which data can be automatically expir
 ``TTL`` value is the time to live value for the data. After that particular amount of time, data will be automatically deleted. For example, if the TTL value is set to 100 seconds then data would be automatically deleted after 100 seconds.
 To use this feature you have to set ``scylladb.ttl`` config with time(in seconds) for which you want to retain the data. If you don't specify this property then the record will be inserted with default TTL value null, meaning that written data will not expire.
 
+TTL can also be selected per record through a topic mapping. Use ``__ttl=value.field`` when the field contains a
+relative lifetime in seconds. Use ``__expiration=value.field`` when the field contains an absolute Kafka
+``Timestamp`` or Unix epoch timestamp in milliseconds. An optional
+``topic.<topic>.<keyspace>.<table>.expirationOffsetSeconds`` value is added to the absolute timestamp before the TTL
+is calculated. For example, an offset of ``86400`` expires a record one day after its expiration field.
+
 --------------------------------
 Offset tracking Support in Kafka
 --------------------------------

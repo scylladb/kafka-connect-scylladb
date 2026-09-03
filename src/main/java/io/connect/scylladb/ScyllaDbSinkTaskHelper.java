@@ -86,6 +86,9 @@ public class ScyllaDbSinkTaskHelper {
       final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
+      if (topicConfigs != null && topicConfigs.getTtl() != null) {
+        boundStatement = boundStatement.setInt("__ttl", topicConfigs.getTtl());
+      }
     }
 
     if (topicConfigs != null) {
