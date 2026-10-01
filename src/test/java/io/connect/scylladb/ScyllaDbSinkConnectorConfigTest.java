@@ -34,5 +34,19 @@ public class ScyllaDbSinkConnectorConfigTest {
     assertEquals(true, config.keyspaceCreateEnabled);
   }
 
+  @Test
+  public void shouldAcceptExpirationOffsetTopicConfig() {
+    settings.put(
+            "topic.events.scylladb.events.mapping",
+            "id=key.id, __expiration=value.validUntil");
+    settings.put(
+            "topic.events.scylladb.events.expirationOffsetSeconds",
+            "86400");
+
+    config = new ScyllaDbSinkConnectorConfig(settings);
+
+    assertNotNull(config.topicWiseConfigs.get("events"));
+  }
+
   //TODO: Add more tests
 }
