@@ -278,10 +278,19 @@
     <dependencies>
 
         <!--TODO: Bump this version up-->
+        <!-- CVE-2026-84939: freemarker is only used by connect-utils' template package,
+             which this connector never loads; excluded rather than pinned. Revisit if
+             io.confluent.kafka.connect.utils.template.* is ever used. -->
         <dependency>
             <groupId>io.confluent.kafka</groupId>
             <artifactId>connect-utils</artifactId>
             <version>0.1.18</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.freemarker</groupId>
+                    <artifactId>freemarker</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
