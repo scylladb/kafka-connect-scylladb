@@ -1,0 +1,38 @@
+name: Pinned actions
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - '.github/**'
+  pull_request:
+    paths:
+      - '.github/**'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check action refs are pinned
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fail on action refs not pinned to a commit SHA
+        run: |
+          # Local (./) and docker:// refs are not repository refs, so they are skipped.
+          # scylladb/github-automation stays on @main until the org settles on an approach.
+          unpinned=$(grep -rnE '^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*[^.[:space:]]' .github \
+            --include='*.yml' --include='*.yaml' \
+            | grep -vE 'uses:[[:space:]]*docker://' \
+            | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' \
+            | grep -vE 'uses:[[:space:]]*scylladb/github-automation/' || true)
+          if [ -n "$unpinned" ]; then
+            echo "::error::Pin these refs to a full commit SHA with a '# vX.Y.Z' comment:"
+            echo "$unpinned"
+            exit 1
+          fi
+          echo "All action refs are pinned."
