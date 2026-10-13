@@ -189,13 +189,18 @@ Also, these topic level configurations will override the behavior of Connector l
   For example if you're using RegexRouter to change the topic name from `top1` to `top2` you would use `topic.top2.ks.table.mapping=...` property.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
-  In the Kafka topic mapping, you can optionally specify which column should be used as the ttl (time-to-live) and 
-  timestamp of the record being inserted into the database table using the special property __ttl and __timestamp.
+  In the Kafka topic mapping, you can optionally specify fields that control the ttl (time-to-live), absolute
+  expiration time, and write timestamp of the record using the special properties ``__ttl``, ``__expiration``,
+  and ``__timestamp``.
+  ``__ttl`` must reference an Integer field containing a relative lifetime in seconds.
+  ``__expiration`` must reference a Kafka Timestamp or a Long containing a Unix epoch timestamp in milliseconds.
+  The connector calculates a per-record TTL from the absolute expiration time.
+  A mapping cannot contain both ``__ttl`` and ``__expiration``.
   By default, the database internally tracks the write time(timestamp) of records inserted into Kafka. 
   However, this __timestamp feature in the mapping supports the scenario where the Kafka records have an explicit 
   timestamp field that you want to use as a write time for the database record produced by the connector. 
   Eg. "topic.my_topic.my_ks.my_table.mapping": 
-  "column1=key.field1, column2=value.field1, __ttl=value.field2, __timestamp=value.field3, column3=header.field1"
+  "column1=key.field1, column2=value.field1, __expiration=value.validUntil, __timestamp=value.field3, column3=header.field1"
   
 ``topic.my_topic.my_ks.my_table.consistencyLevel``
 
@@ -204,6 +209,13 @@ Also, these topic level configurations will override the behavior of Connector l
 ``topic.my_topic.my_ks.my_table.ttlSeconds``
 
   By using this property we can specify table wide ttl(time-to-live).
+
+``topic.my_topic.my_ks.my_table.expirationOffsetSeconds``
+
+  A non-negative number of seconds added to the timestamp referenced by ``__expiration`` before calculating TTL.
+  For example, use ``86400`` to expire a record one day after its expiration timestamp. The default is ``0``.
+  If the resulting expiration time is not in the future, record processing follows the configured
+  ``behavior.on.error`` policy.
 
 ``topic.my_topic.my_ks.my_table.deletesEnabled``
 
