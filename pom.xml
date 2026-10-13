@@ -11,6 +11,7 @@
     <inceptionYear>2020</inceptionYear>
 
     <properties>
+        <gpg.bestPractices>true</gpg.bestPractices>
         <project.inceptionYear>2020</project.inceptionYear>
         <license.current.year>2026</license.current.year>
         <kafka.connect.maven.plugin.version>0.12.0</kafka.connect.maven.plugin.version>
