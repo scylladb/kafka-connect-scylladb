@@ -69,6 +69,9 @@ jobs:
           distribution: 'temurin'
           server-id: central
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          # setup-java v6 defaults this to GPG_PASSPHRASE and writes it into settings.xml as
+          # gpg.passphraseEnvName, so the gpg plugin would ignore MAVEN_GPG_PASSPHRASE below
+          gpg-passphrase-env-var: MAVEN_GPG_PASSPHRASE
           server-username: SONATYPE_TOKEN_USERNAME
           server-password: SONATYPE_TOKEN_PASSWORD
 
