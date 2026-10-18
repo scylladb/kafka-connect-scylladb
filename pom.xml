@@ -22,7 +22,7 @@
         <scylladb.version>4.19.2.2</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
-        <jackson.version>2.22.3</jackson.version>
+        <jackson.version>2.22.4</jackson.version>
         <jackson-annotations.version>2.22</jackson-annotations.version>
         <guava.version>33.7.2-jre</guava.version>
         <release.autopublish>false</release.autopublish>
