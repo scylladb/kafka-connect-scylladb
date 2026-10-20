@@ -17,10 +17,18 @@ class WorkflowTests(unittest.TestCase):
         preserve = text.index('cp scripts/release/guard.py "$RUNNER_TEMP/release-guard.py"')
         checkout = text.index('git checkout')
         validate = text.index('python3 "$RELEASE_GUARD" check')
-        credentials = text.index('gpg-private-key:')
+        credentials = text.index('RELEASE_GPG_PRIVATE_KEY:')
         self.assertLess(preserve, checkout)
         self.assertLess(checkout, validate)
         self.assertLess(validate, credentials)
+
+    def test_signing_helper_owns_ci_key_import(self):
+        java = next(step for step in self.steps if step.startswith('Set up Java\n'))
+        configure = next(step for step in self.steps
+                         if step.startswith('Configure protected repository signing subkey\n'))
+        self.assertNotIn('gpg-private-key:', java)
+        self.assertIn('RELEASE_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}', configure)
+        self.assertIn('python3 "$RELEASE_SIGNING_HELPER" configure', configure)
 
     def test_runner_paths_are_exported_after_runner_starts(self):
         job_header = self.workflow.split('    steps:', 1)[0]
@@ -41,7 +49,8 @@ class WorkflowTests(unittest.TestCase):
                                 in command for command in commands), goal)
 
     def test_sanitized_log_upload_is_unconditional_and_nonfatal(self):
-        upload, warning = self.steps[-2:]
+        upload = next(step for step in self.steps if step.startswith('Upload sanitized release logs\n'))
+        warning = next(step for step in self.steps if step.startswith('Warn if sanitized log upload failed\n'))
         self.assertTrue(upload.startswith('Upload sanitized release logs\n'))
         self.assertIn('if: always()', upload)
         self.assertIn('continue-on-error: true', upload)
