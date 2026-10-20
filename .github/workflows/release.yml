@@ -106,6 +106,7 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           SKIP_TESTS: ${{ inputs.skip-tests }}
         run: |
+          export MAVEN_OPTS="${MAVEN_OPTS:-} $RELEASE_MAVEN_OPTS"
           args=(-DpushChanges=false)
           if [[ "$SKIP_TESTS" == "true" ]]; then
             MAVEN_OPTS="${MAVEN_OPTS:-} -DskipTests=true -DskipITs=true"
@@ -145,6 +146,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
           SKIP_TESTS: ${{ inputs.skip-tests }}
         run: |
+          export MAVEN_OPTS="${MAVEN_OPTS:-} $RELEASE_MAVEN_OPTS"
           args=()
           if [[ "$DRY_RUN" != "true" ]]; then
             args+=(-Drelease.autopublish=true)
