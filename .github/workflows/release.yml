@@ -52,6 +52,12 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Preserve repository signing policy
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/release-signing-policy"
+          cp scripts/release/signing.py scripts/release/publisher.asc "$RUNNER_TEMP/release-signing-policy/"
+          echo "RELEASE_SIGNING_HELPER=$RUNNER_TEMP/release-signing-policy/signing.py" >> "$GITHUB_ENV"
+
       - name: Preserve release guard
         run: |
           echo "RELEASE_GUARD=$RUNNER_TEMP/release-guard.py" >> "$GITHUB_ENV"
@@ -84,10 +90,10 @@ jobs:
           server-username: SONATYPE_TOKEN_USERNAME
           server-password: SONATYPE_TOKEN_PASSWORD
 
-      - name: Configure Git user
-        run: |
-          git config user.name "ScyllaDB Promoter"
-          git config user.email "github-promoter@scylladb.com"
+      - name: Configure protected repository signing subkey
+        env:
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: python3 "$RELEASE_SIGNING_HELPER" configure
 
       - name: Clean project
         run: python3 "$RELEASE_GUARD" run mvn -B -ntp clean
@@ -100,12 +106,16 @@ jobs:
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           SKIP_TESTS: ${{ inputs.skip-tests }}
         run: |
+          export MAVEN_OPTS="${MAVEN_OPTS:-} $RELEASE_MAVEN_OPTS"
           args=(-DpushChanges=false)
           if [[ "$SKIP_TESTS" == "true" ]]; then
             MAVEN_OPTS="${MAVEN_OPTS:-} -DskipTests=true -DskipITs=true"
           fi
           export MAVEN_OPTS
           python3 "$RELEASE_GUARD" run mvn -B -ntp release:prepare "${args[@]}"
+
+      - name: Verify prepared release commits and tag with public key only
+        run: python3 "$RELEASE_SIGNING_HELPER" verify-prepared
 
       - name: Recheck for open release blockers
         if: inputs.dry-run == false
@@ -136,6 +146,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
           SKIP_TESTS: ${{ inputs.skip-tests }}
         run: |
+          export MAVEN_OPTS="${MAVEN_OPTS:-} $RELEASE_MAVEN_OPTS"
           args=()
           if [[ "$DRY_RUN" != "true" ]]; then
             args+=(-Drelease.autopublish=true)
@@ -263,3 +274,7 @@ jobs:
       - name: Warn if sanitized log upload failed
         if: always() && steps.upload-logs.outcome == 'failure'
         run: echo "::warning::Sanitized release logs could not be uploaded; do not re-run a published release."
+
+      - name: Remove temporary release signing files
+        if: always() && env.RELEASE_SIGNING_DIR != ''
+        run: python3 "$RELEASE_SIGNING_HELPER" cleanup

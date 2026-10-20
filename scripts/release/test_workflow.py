@@ -41,7 +41,8 @@ class WorkflowTests(unittest.TestCase):
                                 in command for command in commands), goal)
 
     def test_sanitized_log_upload_is_unconditional_and_nonfatal(self):
-        upload, warning = self.steps[-2:]
+        upload = next(step for step in self.steps if step.startswith('Upload sanitized release logs\n'))
+        warning = next(step for step in self.steps if step.startswith('Warn if sanitized log upload failed\n'))
         self.assertTrue(upload.startswith('Upload sanitized release logs\n'))
         self.assertIn('if: always()', upload)
         self.assertIn('continue-on-error: true', upload)
