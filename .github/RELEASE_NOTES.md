@@ -61,4 +61,7 @@ barrier; no follow-up synchronization work is scheduled. Preserve already
 published notes when retrying artifact uploads.
 
 Maintainers can apply the label manually after verifying every change is
-support-only; the next classifier run reconciles it with these rules.
+support-only; the next classifier run reconciles it with these rules. Manual
+addition or removal of this exact label skips the local Jira label callers.
+Other events retain their existing routing. Existing Jira label copies and
+other synchronization paths are unchanged.
