@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"users\",\"NhAgoA9Vc6mQDL2EqdeKGfww19E=\",\"c02\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"NhAgoA9Vc6mQDL2EqdeKGfww19E=\",\"c02\"],\"gen\":1,\"exp\":0,\"lut\":1793046717306,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"},{\"name\":\"age\",\"type\":\"int\",\"value\":30}]}"
+    },
+    {
+      "key": "[\"test\",\"users\",\"NhAgoA9Vc6mQDL2EqdeKGfww19E=\",\"c02\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"NhAgoA9Vc6mQDL2EqdeKGfww19E=\",\"c02\"],\"gen\":2,\"exp\":0,\"lut\":1793046720310,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"bob\"},{\"name\":\"age\",\"type\":\"int\",\"value\":31}]}"
+    }
+  ]
+}
