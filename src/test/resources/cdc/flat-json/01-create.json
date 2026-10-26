@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c01\",\"digest\":\"Q4p88cjs+zmjkzeoN8kzmb1G5a8=\"}",
+      "value": "{\"metadata\":{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c01\",\"digest\":\"Q4p88cjs+zmjkzeoN8kzmb1G5a8=\",\"msg\":\"write\",\"gen\":1,\"lut\":1793046969888,\"exp\":0},\"name\":\"alice\",\"age\":30}"
+    }
+  ]
+}

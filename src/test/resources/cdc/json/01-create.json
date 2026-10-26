@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"users\",\"Q4p88cjs+zmjkzeoN8kzmb1G5a8=\",\"c01\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"Q4p88cjs+zmjkzeoN8kzmb1G5a8=\",\"c01\"],\"gen\":1,\"exp\":0,\"lut\":1793046708794,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"},{\"name\":\"age\",\"type\":\"int\",\"value\":30}]}"
+    }
+  ]
+}
