@@ -3,6 +3,7 @@ package io.connect.scylladb;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.Before;
 import org.junit.Test;
@@ -11,6 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
@@ -181,6 +183,46 @@ public class ScyllaDbSinkConnectorConfigTest {
     settings.put("topic.a.ks.t.timestampField", "lut");
     ConfigException field = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
     assertTrue(field.getMessage(), field.getMessage().contains("topic.a.ks.t.timestampField"));
+  }
+
+  @Test
+  public void shouldRetryWithoutLimitByDefault() {
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertEquals(-1, config.maxRetries);
+    assertEquals(3000L, config.retryBackoffMs);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectMaxRetriesBelowMinusOne() {
+    settings.put(ScyllaDbSinkConnectorConfig.MAX_RETRIES_CONFIG, "-2");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectZeroRetryBackoff() {
+    settings.put(ScyllaDbSinkConnectorConfig.RETRY_BACKOFF_MS_CONFIG, "0");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectSerialConsistencyLevel() {
+    settings.put(ScyllaDbSinkConnectorConfig.CONSISTENCY_LEVEL_CONFIG, "LOCAL_SERIAL");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
+  @Test
+  public void shouldRejectSerialTopicConsistencyLevel() {
+    settings.put("topic.a.b-c.ks1.t1.consistencyLevel", "SERIAL");
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("topic.a.b-c.ks1.t1.consistencyLevel"));
+  }
+
+  @Test
+  public void shouldListOnlyWritableTopicConsistencyLevels() {
+    settings.put("topic.a.ks1.t1.consistencyLevel", "FOO");
+    DataException ex = assertThrows(DataException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("LOCAL_QUORUM"));
+    assertFalse(ex.getMessage(), ex.getMessage().contains("SERIAL"));
   }
 
   //TODO: Add more tests

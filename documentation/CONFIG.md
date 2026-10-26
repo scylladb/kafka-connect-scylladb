@@ -261,7 +261,10 @@ the sanitized name may be another subscribed topic.
   * Type: String
   * Importance: High
   * Default Value: LOCAL_QUORUM
-  * Valid Values: ``ANY``, ``ONE``, ``TWO``, ``THREE``, ``QUORUM``, ``ALL``, ``LOCAL_QUORUM``, ``EACH_QUORUM``, ``SERIAL``, ``LOCAL_SERIAL``, ``LOCAL_ONE``
+  * Valid Values: ``ANY``, ``ONE``, ``TWO``, ``THREE``, ``QUORUM``, ``ALL``, ``LOCAL_QUORUM``, ``EACH_QUORUM``, ``LOCAL_ONE``
+
+  ``SERIAL`` and ``LOCAL_SERIAL`` apply only to conditional updates, which the connector does not write, so
+  they fail validation here and in ``topic.my_topic.my_ks.my_table.consistencyLevel``.
 
 ``scylladb.deletes.enabled``
 
@@ -305,7 +308,8 @@ the sanitized name may be another subscribed topic.
   Written as ``key.<field>``, ``value.<field>`` or ``header.<name>``; nested fields are separated by dots,
   for example ``value.metadata.lut`` for a last-update time carried in the change metadata of the record.
   A header name may itself contain dots: the longest name that matches a header is used.
-  A record whose field is missing or null fails, and ``behavior.on.error`` decides what happens next.
+  A record whose field is missing or null fails: it goes to the errant record reporter under ``errors.tolerance``,
+  or, without a reporter, ``behavior.on.error`` decides.
   Tombstones have no value, so deletes need a ``key.`` or ``header.`` field. Prefer ``header.``: a table the
   connector creates without a ``mapping`` puts every key field into the primary key, so with ``key.`` each event
   would get its own row.
@@ -340,29 +344,96 @@ the sanitized name may be another subscribed topic.
   * Valid Values: ``SECONDS``, ``MILLISECONDS``, ``MICROSECONDS``, ``NANOSECONDS``
   * Default Value: MICROSECONDS
 
+``scylladb.max.retries``
+
+  The number of times a batch is retried after consecutive transient write failures, such as
+  ScyllaDB being unreachable or a timeout, before the task fails. 0 fails the task on the first
+  one; -1 retries without limit. See [Error handling](#error-handling).
+
+  * Type: Int
+  * Importance: Medium
+  * Valid Values: [-1,...]
+  * Default Value: -1
+
+``scylladb.retry.backoff.ms``
+
+  The time to wait before retrying a batch after a transient write failure. The worker never waits
+  past its next offset commit (``offset.flush.interval.ms``).
+
+  * Type: Long
+  * Importance: Low
+  * Valid Values: [1,...]
+  * Default Value: 3000
+
 ### ScyllaDB
 
 ``behavior.on.error``
 
-Error handling behavior setting. Must be configured to one of the following:
+How a record error, a record that ScyllaDB rejects or that cannot be converted, is handled.
+Transient errors are retried and fatal errors fail the task whatever this setting is. Must be
+configured to one of the following:
 
 ``fail``
 
-The Connector throws ConnectException and stops processing records when an error occurs while processing or inserting records into ScyllaDB.
+The task fails with ConnectException at the first record error. Records after one that cannot be
+converted are not written, but records after one ScyllaDB rejects may be, as writes run concurrently.
+No offsets are committed, so the batch is redelivered.
 
 ``ignore``
 
-Continues to process next set of records when error occurs while processing or inserting records into ScyllaDB.
-  
+The record is skipped.
+
 ``log``
 
-Logs the error via connect-reporter when an error occurs while processing or inserting records into ScyllaDB and continues to process next set of records, available in the kafka topics.
+The error is logged and the record is skipped.
 
 * Type: string
 * Default: FAIL
 * Valid Values: [FAIL, LOG, IGNORE]
 * Importance: medium
 
+When the worker provides an errant record reporter (``errors.deadletterqueue.topic.name`` or
+``errors.log.enable`` is set, see [Error handling](#error-handling)), failed records are reported to
+it instead, ``errors.tolerance`` applies, and this setting is not used.
+
+
+### Error handling
+
+The connector tells three kinds of failures apart:
+
+* **Record errors**: ScyllaDB rejects the record itself (for example an empty partition key), or
+  the record cannot be converted. Retrying cannot help. When the worker provides an errant record
+  reporter, the record is reported to it and ``errors.tolerance`` decides: with ``none`` (the Kafka
+  Connect default) the task fails, with ``all`` the task continues. The record goes to the dead
+  letter queue when ``errors.deadletterqueue.topic.name`` is set; with only ``errors.log.enable``
+  it is logged. Without a reporter, ``behavior.on.error`` decides.
+* **Transient errors**: ScyllaDB is unreachable, times out, is overloaded, rate-limits a partition,
+  or a replica fails the write. The task waits ``scylladb.retry.backoff.ms`` and the batch is delivered again, up to
+  ``scylladb.max.retries`` times in a row; the next failure fails the task. By default it retries
+  without limit, so an outage blocks the task until ScyllaDB is back, with no data loss. A batch is
+  retried as a whole: its record errors are handled once the rest of it is written. A write that a
+  replica rejects for exceeding a large data threshold reaches the connector as an ordinary write
+  failure, so it is retried too; set ``scylladb.max.retries`` to keep such a record from blocking
+  the task.
+* **Fatal errors**: rejected credentials or permissions, an invalid query or configuration (such as
+  a missing keyspace, table or column, a table whose primary key differs from the mapping, or a
+  write consistency level the cluster forbids), a server or protocol error, or an unexpected
+  error. The task fails. A keyspace, table or column dropped while the task runs fails it too;
+  with ``scylladb.table.manage.enabled``, restarting the task recreates the table or column. A
+  delete from a missing table is skipped with a warning.
+
+With ``scylladb.offset.storage.table.enable=true`` (the default) the task reads its offsets from
+ScyllaDB when it starts, so an outage at that moment fails the task. Writes to the offset table are
+retried by the worker and do not count against ``scylladb.max.retries``; bounding them is tracked in
+[#294](https://github.com/scylladb/kafka-connect-scylladb/issues/294).
+
+To send record errors to a dead letter queue, use the standard Kafka Connect settings:
+
+```
+errors.tolerance=all
+errors.deadletterqueue.topic.name=scylladb-sink-dlq
+errors.deadletterqueue.context.headers.enable=true
+```
 
 ### Confluent Platform Configurations.
 
