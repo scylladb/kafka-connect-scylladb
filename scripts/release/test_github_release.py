@@ -51,6 +51,7 @@ class GitHubReleaseTests(unittest.TestCase):
         self.calls = []
         self.existing = None
         self.object = 'sha'
+        self.commit = 'sha'
         self.remote = 'sha\trefs/tags/1.1.11\n'
         self.environment = patch.dict(os.environ, GITHUB_REPOSITORY='scylladb/kafka-connect-scylladb')
         self.environment.start()
@@ -62,7 +63,8 @@ class GitHubReleaseTests(unittest.TestCase):
     def run_command(self, *args, **kwargs):
         self.calls.append(args)
         if args[:2] == ('git', 'rev-parse'):
-            return CompletedProcess(args, 0, 'sha\n' if args[-1].endswith('^{commit}') else self.object + '\n')
+            identity = self.commit if args[-1].endswith('^{commit}') else self.object
+            return CompletedProcess(args, 0, identity + '\n')
         if args[:2] == ('git', 'ls-remote'):
             if self.remote is None:
                 raise subprocess.CalledProcessError(2, args, output='')
@@ -130,19 +132,24 @@ class GitHubReleaseTests(unittest.TestCase):
 
     def test_record_retains_exact_tag_object_and_commit_before_cleanup(self):
         self.object = 'a' * 40
-        with patch.object(github_release, 'command', return_value=CompletedProcess([], 0, 'a' * 40)):
-            with patch.dict(os.environ, GITHUB_ENV='environment'):
-                github_release.record()
+        self.commit = 'b' * 40
+        with patch.dict(os.environ, GITHUB_ENV='environment'):
+            github_release.record()
         retained = Path('environment').read_text()
         self.assertIn('RELEASE_TAG=1.1.11\n', retained)
-        self.assertIn('RELEASE_TAG_OBJECT=' + 'a' * 40, retained)
-        self.assertIn('RELEASE_COMMIT=' + 'a' * 40, retained)
+        self.assertIn('RELEASE_TAG_OBJECT=' + self.object + '\n', retained)
+        self.assertIn('RELEASE_COMMIT=' + self.commit + '\n', retained)
 
     def test_changed_prepared_identity_fails_before_release_api(self):
-        with patch.dict(os.environ, RELEASE_TAG_OBJECT='different'):
-            with self.assertRaisesRegex(RuntimeError, 'changed after Maven prepare'):
-                github_release.publish()
-        self.assertFalse(any(call[0] == 'gh' for call in self.calls))
+        for field in ('RELEASE_TAG_OBJECT', 'RELEASE_COMMIT'):
+            with self.subTest(field=field):
+                self.calls.clear()
+                retained = {'RELEASE_TAG_OBJECT': self.object, 'RELEASE_COMMIT': self.commit}
+                retained[field] = 'different'
+                with patch.dict(os.environ, retained):
+                    with self.assertRaisesRegex(RuntimeError, 'changed after Maven prepare'):
+                        github_release.publish()
+                self.assertFalse(any(call[0] == 'gh' for call in self.calls))
 
     def test_tag_identity_rejects_missing_ambiguous_or_prefixed_tags(self):
         for properties in ['', 'scm.tag=v1.1.11\n', 'scm.tag=1.1.10\nscm.tag=1.1.11\n']:
