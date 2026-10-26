@@ -20,9 +20,11 @@ import io.connect.scylladb.*;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.config.Config;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.errors.DataException;
+import org.apache.kafka.connect.header.ConnectHeaders;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import io.confluent.common.utils.IntegrationTest;
@@ -1104,6 +1106,46 @@ public class ScyllaDbSinkConnectorIT {
     assertEquals(1, errors.size(), errors.toString());
     assertTrue(errors.get(0).contains("no_such_keyspace"), errors.get(0));
     assertThrows(ConnectException.class, () -> connector.start(settings));
+  }
+
+  @Test
+  public void writeTimestampFromField() {
+    final String topic = "writeTimestampFromField";
+    final Map<String, String> settings = settings();
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "header.lut");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "MILLISECONDS");
+    connector = new ScyllaDbSinkConnector();
+    connector.start(settings);
+    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 0)));
+    this.task.start(settings);
+
+    // All events share one Kafka timestamp, as in a burst of changes to one row within a millisecond.
+    final SinkRecord insertA = timestamped(topic, 0, "a", 1_000L);
+    final SinkRecord delete = timestamped(topic, 1, null, 2_000L);
+    final SinkRecord insertB = timestamped(topic, 2, "b", 3_000L);
+    this.task.put(ImmutableList.of(insertA, delete, insertB));
+
+    List<Row> rows = selectAll("SELECT name, WRITETIME(name) FROM " + SCYLLADB_KEYSPACE + "." + topic.toLowerCase());
+    assertEquals(1, rows.size(), "the last event must win although all share a Kafka timestamp");
+    assertEquals("b", rows.get(0).getString(0));
+    assertEquals(3_000_000L, rows.get(0).getLong(1));
+
+    // Redelivered older events must not overwrite or delete the newer row.
+    this.task.put(ImmutableList.of(timestamped(topic, 0, "a", 1_000L), timestamped(topic, 1, null, 2_000L)));
+    rows = selectAll("SELECT name FROM " + SCYLLADB_KEYSPACE + "." + topic.toLowerCase());
+    assertEquals(1, rows.size());
+    assertEquals("b", rows.get(0).getString(0));
+  }
+
+  private static SinkRecord timestamped(String topic, long offset, String name, long lut) {
+    final Struct key = struct("key", "id", Schema.Type.INT64, true, 1L);
+    final Struct value = name == null ? null
+            : struct("value", "id", Schema.Type.INT64, true, 1L, "name", Schema.Type.STRING, true, name);
+    final ConnectHeaders headers = new ConnectHeaders();
+    headers.addLong("lut", lut);
+    return new SinkRecord(topic, 0, key.schema(), key, value == null ? null : value.schema(), value,
+            offset, 1_700_000_000_000L, TimestampType.CREATE_TIME, headers);
   }
 
   private List<Row> selectAll(String query) {

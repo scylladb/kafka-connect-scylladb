@@ -4,7 +4,9 @@ import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
+import com.datastax.oss.driver.shaded.guava.common.base.Strings;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
+import io.connect.scylladb.WriteTimestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -33,7 +35,7 @@ public class TopicConfigs {
   private String ttlMappedField;
   private Integer ttl;
   private String timeStampMappedField;
-  private Long timeStamp;
+  private final WriteTimestamp writeTimestamp;
   private boolean deletesEnabled;
   private boolean isScyllaColumnsMapped;
 
@@ -46,6 +48,17 @@ public class TopicConfigs {
     this.consistencyLevel = scyllaDbSinkConnectorConfig.consistencyLevel;
     this.ttl = scyllaDbSinkConnectorConfig.ttl;
     this.deletesEnabled = scyllaDbSinkConnectorConfig.deletesEnabled;
+    // A per-topic field or unit overrides only its own connector-level counterpart.
+    final String timestampField = configsMapForTheTopic.getOrDefault(
+            "timestampField", scyllaDbSinkConnectorConfig.timestampField);
+    final String timestampUnit = configsMapForTheTopic.getOrDefault(
+            "timestampUnit", scyllaDbSinkConnectorConfig.timestampUnit);
+    if (configsMapForTheTopic.containsKey("timestampUnit")) {
+      // Checked even when no field uses it, so a typo is not silently ignored.
+      WriteTimestamp.parseUnit(timestampUnit);
+    }
+    this.writeTimestamp = Strings.isNullOrEmpty(timestampField)
+            ? null : WriteTimestamp.of(timestampField, timestampUnit);
     if (configsMapForTheTopic.containsKey("mapping")) {
       this.mappingStringForTopic = configsMapForTheTopic.get("mapping");
       for (String mappedEntry : this.mappingStringForTopic.split(",")) {
@@ -160,24 +173,10 @@ public class TopicConfigs {
     return schemaField;
   }
 
-  public void setTtlAndTimeStampIfAvailable(SinkRecord record) {
-    // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
-    // while Scylla expects a microsecond precision: 1 ms = 1000 us.
-    this.timeStamp = record.timestamp() * 1000;
+  public void setTtlIfAvailable(SinkRecord record) {
     // Tombstones carry no value, so value-mapped fields cannot apply to them.
     if (record.value() == null) {
       return;
-    }
-    if (timeStampMappedField != null) {
-      Object timeStampValue = getValueOfField(record.value(), timeStampMappedField);
-      if (timeStampValue instanceof Long) {
-        this.timeStamp = (Long) timeStampValue;
-      } else {
-        throw new DataException(
-                String.format("TimeStamp should be of type Long. But record provided for %s is of type %s",
-                        timeStampMappedField, timeStampValue.getClass().getName()
-                ));
-      }
     }
     if (ttlMappedField != null) {
       Object ttlValue = getValueOfField(record.value(), ttlMappedField);
@@ -248,8 +247,15 @@ public class TopicConfigs {
     return ttl;
   }
 
-  public Long getTimeStamp() {
-    return timeStamp;
+  /**
+   * @return the write timestamp source set by the timestampField settings, or by the deprecated
+   * <code>__timestamp</code> mapping; null when the Kafka record timestamp applies.
+   */
+  public WriteTimestamp getWriteTimestamp() {
+    if (writeTimestamp == null && timeStampMappedField != null) {
+      return WriteTimestamp.legacyMapping(timeStampMappedField);
+    }
+    return writeTimestamp;
   }
 
   public boolean isScyllaColumnsMapped() {
