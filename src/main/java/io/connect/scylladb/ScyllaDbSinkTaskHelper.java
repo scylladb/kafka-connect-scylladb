@@ -76,6 +76,10 @@ public class ScyllaDbSinkTaskHelper {
     return topicConfigs;
   }
 
+  /**
+   * @return the statement to execute for the record, or <code>null</code> when there is nothing to
+   * execute: a delete from a table that does not exist.
+   */
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     BoundStatement boundStatement = null;
     final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
@@ -106,6 +110,7 @@ public class ScyllaDbSinkTaskHelper {
           boundStatement = state.statement;
         } else {
           log.warn("put() - table '{}.{}' does not exist. Skipping delete.", keyspace, tableName);
+          return null;
         }
       } else {
         throw new DataException(
