@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -71,11 +72,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   final Set<String> listedTopics;
   // Whether the sink subscribes with 'topics.regex', so any name may be one of its topics.
   final boolean topicsByRegex;
+  public final String timestampField;
+  public final String timestampUnit;
+  /** Write timestamp source for topics without per-topic overrides; null for the Kafka record timestamp. */
+  public final WriteTimestamp writeTimestamp;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled|timestampField|timestampUnit)$");
 
-  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {".mapping",".consistencyLevel",".ttlSeconds",".deletesEnabled"};
+  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {".mapping",".consistencyLevel",".ttlSeconds",".deletesEnabled",".timestampField",".timestampUnit"};
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);
 
@@ -124,6 +129,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
+    this.timestampField = getString(TIMESTAMP_FIELD_CONFIG);
+    this.timestampUnit = getString(TIMESTAMP_UNIT_CONFIG);
+    this.writeTimestamp = Strings.isNullOrEmpty(timestampField) ? null : WriteTimestamp.of(timestampField, timestampUnit);
 
     final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
     this.listedTopics = topics == null ? Collections.emptySet()
@@ -149,6 +157,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                   topicName, previousTarget[0], previousTarget[1], target[0], target[1], topicName));
         }
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
+        checkTimestampSetting(name2, m.group(4), entry.getValue());
         topicMap.put(m.group(4), entry.getValue());
       }
     }
@@ -295,6 +304,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "Logs the error via connect-reporter when an error occurs while processing or "
           + "inserting records into ScyllaDB and continues to process next set of records, "
           + "available in the kafka topics.";
+
+  public static final String TIMESTAMP_FIELD_CONFIG = "scylladb.timestamp.field";
+  private static final String TIMESTAMP_FIELD_DOC = "Record field to take the write timestamp "
+          + "(CQL USING TIMESTAMP) from, for both writes and deletes: 'key.<field>', 'value.<field>' "
+          + "or 'header.<name>'. Nested fields are separated by dots, e.g. 'value.metadata.lut'; "
+          + "a header name may contain dots, and the longest matching name wins. "
+          + "A record without the field fails. When empty, the Kafka record timestamp is used.";
+  public static final String TIMESTAMP_UNIT_CONFIG = "scylladb.timestamp.unit";
+  private static final String TIMESTAMP_UNIT_DEFAULT = "MICROSECONDS";
+  private static final String TIMESTAMP_UNIT_DOC = "Unit of the integer in scylladb.timestamp.field, one of "
+          + String.join(", ", WriteTimestamp.UNITS) + ". Timestamp-typed fields ignore it.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -592,7 +612,35 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.NONE,
                     BEHAVIOR_ON_ERROR_DISPLAY,
                     new ListRecommender(Arrays.asList(toStringArray(BehaviorOnError.values())))
-            );
+            )
+            // Write timestamp
+            .define(
+                    TIMESTAMP_FIELD_CONFIG,
+                    ConfigDef.Type.STRING,
+                    "",
+                    (name, value) -> {
+                      if (!Strings.isNullOrEmpty((String) value)) {
+                        WriteTimestamp.of((String) value, TIMESTAMP_UNIT_DEFAULT);
+                      }
+                    },
+                    ConfigDef.Importance.MEDIUM,
+                    TIMESTAMP_FIELD_DOC,
+                    WRITE_GROUP,
+                    5,
+                    ConfigDef.Width.MEDIUM,
+                    "Write timestamp field")
+            .define(
+                    TIMESTAMP_UNIT_CONFIG,
+                    ConfigDef.Type.STRING,
+                    TIMESTAMP_UNIT_DEFAULT,
+                    ConfigDef.CaseInsensitiveValidString.in(WriteTimestamp.UNITS.toArray(new String[0])),
+                    ConfigDef.Importance.LOW,
+                    TIMESTAMP_UNIT_DOC,
+                    WRITE_GROUP,
+                    6,
+                    ConfigDef.Width.SHORT,
+                    "Write timestamp unit",
+                    new ListRecommender(new ArrayList<>(WriteTimestamp.UNITS)));
   }
 
   private Matcher matchTopicSetting(final String name) {
@@ -612,6 +660,19 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       return name;
     } catch (IllegalArgumentException e) {
       throw new ConfigException(setting, name, "Keyspace and table names must be valid CQL names. " + e.getMessage());
+    }
+  }
+
+  // Reports an invalid per-topic timestamp setting under its own name.
+  private static void checkTimestampSetting(String setting, String suffix, String value) {
+    try {
+      if ("timestampUnit".equals(suffix)) {
+        WriteTimestamp.parseUnit(value);
+      } else if ("timestampField".equals(suffix) && !Strings.isNullOrEmpty(value)) {
+        WriteTimestamp.of(value, TIMESTAMP_UNIT_DEFAULT);
+      }
+    } catch (ConfigException e) {
+      throw new ConfigException(setting, value, e.getMessage());
     }
   }
 

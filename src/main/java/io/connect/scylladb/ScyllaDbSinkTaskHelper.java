@@ -94,11 +94,16 @@ public class ScyllaDbSinkTaskHelper {
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
         topicConfigs.setTablePartitionAndColumnValues(record);
       }
-      topicConfigs.setTtlAndTimeStampIfAvailable(record);
+      topicConfigs.setTtlIfAvailable(record);
     } else {
       keyspace = scyllaDbSinkConnectorConfig.keyspace;
       tableName = sanitizedTableName(record.topic());
     }
+    // Read before any DDL, so a record that fails here leaves the table untouched.
+    final WriteTimestamp writeTimestamp = topicConfigs != null
+            ? topicConfigs.getWriteTimestamp() : scyllaDbSinkConnectorConfig.writeTimestamp;
+    final long timestamp = writeTimestamp != null
+            ? writeTimestamp.micros(record) : WriteTimestamp.kafkaTimestampMicros(record);
     if (null == record.value()) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
@@ -130,15 +135,12 @@ public class ScyllaDbSinkTaskHelper {
 
     if (topicConfigs != null) {
       log.trace("Topic mapped Consistency level : " + topicConfigs.getConsistencyLevel()
-              + ", Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
+              + ", Record/Topic mapped timestamp : " + timestamp);
       boundStatement = boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
-      boundStatement = boundStatement.setQueryTimestamp(topicConfigs.getTimeStamp());
     } else {
       boundStatement = boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
-      // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
-      // while Scylla expects a microsecond precision: 1 ms = 1000 us.
-      boundStatement = boundStatement.setQueryTimestamp(record.timestamp() * 1000);
     }
-    return boundStatement;
+    // The write timestamp is the only ordering between writes to one row: put() runs them concurrently.
+    return boundStatement.setQueryTimestamp(timestamp);
   }
 }

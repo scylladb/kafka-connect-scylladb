@@ -119,6 +119,36 @@ public class ScyllaDbSinkTaskHelperTest {
   }
 
   @Test
+  public void shouldTakeDeleteTimestampFromKeyField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "key.id");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "MILLISECONDS");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 42L));
+
+    verify(session).delete("scylladb", "a_b_c");
+    verify(statement).setQueryTimestamp(42_000L);
+  }
+
+  @Test
+  public void shouldTakeWriteTimestampFromPerTopicField() {
+    settings.put("topic.a.b-c.ks1.t1.timestampField", "value.time");
+    settings.put("topic.a.b-c.ks1.t1.timestampUnit", "SECONDS");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(statement).setQueryTimestamp(100_000_000L);
+  }
+
+  @Test(expected = DataException.class)
+  public void shouldFailTombstoneWhenTimestampFieldIsInValue() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.time");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 1L));
+  }
+
+  @Test
   public void shouldDeleteDespiteValueMappedTtl() {
     settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __ttl=value.time");
     settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
@@ -183,5 +213,35 @@ public class ScyllaDbSinkTaskHelperTest {
     when(converter.convert(any(), any(), anyString())).thenReturn(empty);
 
     assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(tombstone(TOPIC, 1L)));
+  }
+
+  @Test
+  public void shouldTakeLegacyTimestampMappingInMicroseconds() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(42L);
+  }
+
+  @Test
+  public void shouldUseKafkaTimestampForLegacyMappingOnTombstone() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(1000L * 1000);
+  }
+
+  @Test
+  public void shouldPreferTimestampFieldOverLegacyMapping() {
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.id");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "MILLISECONDS");
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(42_000L);
   }
 }
