@@ -13,8 +13,13 @@ const file = (filename, extra = {}) => ({filename, status: 'modified', ...extra}
 const workflowText = readFileSync(join(__dirname, '../workflows/label-release-notes.yml'), 'utf8');
 const workflow = yaml.load(workflowText);
 const steps = workflow.jobs.classify.steps;
+const targetStep = steps.find(step => step.id === 'target');
+const snapshotStep = steps.find(step => step.id === 'guard');
+const finalizerStep = steps.at(-1);
 const scripts = steps.filter(step => step.with?.script).map(step => step.with.script);
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const trustedContext = {repo, eventName: 'pull_request_target', payload: {pull_request: {number: 275}}};
+const manualContext = {repo, eventName: 'workflow_dispatch', payload: {}};
 
 function fixture(options = {}) {
   const files = options.files ?? [file('README.md')];
@@ -22,12 +27,13 @@ function fixture(options = {}) {
   const calls = [];
   let gets = 0;
   let listings = 0;
-  const initial = {head: {sha: 'head'}, base: {sha: 'base'}, changed_files: files.length};
+  const initial = {number: 275, head: {sha: 'head'}, base: {sha: 'base'}, changed_files: files.length};
   const github = {rest: {pulls: {
     get: async params => {
       assert.deepEqual(params, {...repo, pull_number: 275});
       calls.push('get');
       gets++;
+      if (options.issueOnly) throw {status: 404, message: 'Not a pull request'};
       if (options.failGetAt === gets) throw new Error('PR lookup unavailable');
       return {data: {...initial, ...options.revisions?.[gets - 1]}};
     },
@@ -59,18 +65,36 @@ function fixture(options = {}) {
   return {github, labels, calls};
 }
 
-async function adapter(f, hash, overrides = {}, load = () => guard) {
-  const env = {PR_NUMBER: '275', CHECKOUT_OUTCOME: 'success', INSTALL_OUTCOME: 'success',
+async function confirm(f, overrides = {}, context = trustedContext) {
+  const outputs = {};
+  const run = new AsyncFunction('github', 'context', 'core', 'require', 'process', targetStep.with.script);
+  let error;
+  try {
+    await run(f.github, context, {setOutput: (key, value) => { outputs[key] = value; }},
+      () => { throw new Error('Confirmation must not load helper code'); },
+      {env: {PR_NUMBER: '275', ...overrides}});
+  } catch (caught) { error = caught; }
+  return {outputs, error, outcome: error ? 'failure' : 'success'};
+}
+
+async function finalize(f, hash, target, overrides = {}, load = () => guard) {
+  const env = {PR_NUMBER: '275', CONFIRMED_PR: target.outputs['confirmed-pr'],
+    TARGET_OUTCOME: target.outcome, CHECKOUT_OUTCOME: 'success', INSTALL_OUTCOME: 'success',
     GUARD_OUTCOME: 'success', LABELER_OUTCOME: 'success', UNSAFE_RENAME: 'false',
     SNAPSHOT_HASH: hash, ...overrides};
   const logs = [];
-  const run = new AsyncFunction('github', 'context', 'core', 'require', 'process', scripts[1]);
+  const run = new AsyncFunction('github', 'context', 'core', 'require', 'process', finalizerStep.with.script);
   let error;
   try {
     await run(f.github, {repo}, {info: text => logs.push(text), error: text => logs.push(text)},
       load, {env});
   } catch (caught) { error = caught; }
   return {error, logs};
+}
+
+async function adapter(f, hash, overrides = {}, load = () => guard, context = trustedContext) {
+  const target = await confirm(f, overrides, context);
+  return {...await finalize(f, hash, target, overrides, load), target};
 }
 
 test('canonical policy matches mixed support files and keeps runtime or unknown paths visible', async () => {
@@ -114,6 +138,66 @@ test('PR input rejects malformed, ambiguous and unsafe numbers', () => {
   for (const value of ['', '0', '-1', '01', '1.0', '1e2', ' 275', '275\n',
     '275,21', '${{ arbitrary }}', '9007199254740992', undefined, 275]) {
     assert.throws(() => guard.parseNumber(value), /canonical positive safe PR number/);
+  }
+});
+
+test('manual confirmation uses the matching PR endpoint and trusted events need no lookup', async () => {
+  const manual = fixture();
+  const target = await confirm(manual, {}, manualContext);
+  assert.ifError(target.error);
+  assert.deepEqual(target.outputs, {'confirmed-pr': 'true'});
+  assert.deepEqual(manual.calls, ['get']);
+  const trusted = fixture({failGetAt: 1});
+  assert.deepEqual((await confirm(trusted)).outputs, {'confirmed-pr': 'true'});
+  assert.deepEqual(trusted.calls, []);
+  const mismatch = fixture({issueOnly: true});
+  const result = await confirm(mismatch, {}, {...trustedContext, payload: {pull_request: {number: 276}}});
+  assert.ok(result.error);
+  assert.deepEqual(result.outputs, {});
+  assert.deepEqual(mismatch.calls, ['get']);
+});
+
+test('ordinary issues and unavailable or mismatched manual PR identities receive no label writes', async () => {
+  for (const options of [{issueOnly: true}, {failGetAt: 1},
+    ...[276, '275', undefined, null].map(number => ({revisions: [{number}]}))]) {
+    const f = fixture({...options, labels: [label, 'unrelated']});
+    const {error, target} = await adapter(f, '', {CHECKOUT_OUTCOME: 'skipped'},
+      () => { throw new Error('Must not load helper'); }, manualContext);
+    assert.ok(target.error);
+    assert.deepEqual(target.outputs, {});
+    assert.match(error.message, /not confirmed as a pull request/);
+    assert.deepEqual(f.calls, ['get']);
+    assert.deepEqual([...f.labels], [label, 'unrelated']);
+  }
+});
+
+test('invalid target numbers and finalizers without confirmation receive no label writes', async () => {
+  for (const value of ['', '0', '-1', '01', '1.0', '1e2', ' 275', '275\n',
+    '275,21', '${{ arbitrary }}', '9007199254740992', undefined]) {
+    const f = fixture({labels: [label]});
+    const {error, target} = await adapter(f, '', {PR_NUMBER: value}, undefined, manualContext);
+    assert.match(target.error.message, /canonical positive safe PR number/);
+    assert.match(error.message, /canonical positive safe PR number/);
+    assert.deepEqual(target.outputs, {});
+    assert.deepEqual(f.calls, []);
+  }
+  const f = fixture({labels: [label]});
+  const result = await finalize(f, '', {outputs: {}, outcome: 'skipped'}, {CHECKOUT_OUTCOME: 'skipped'});
+  assert.match(result.error.message, /not confirmed as a pull request/);
+  assert.deepEqual(f.calls, []);
+});
+
+test('manual confirmation survives a later lookup failure or missing helper', async () => {
+  for (const [load, calls] of [
+    [() => guard, ['get', 'get', 'remove']],
+    [() => { throw new Error('Helper missing'); }, ['get', 'remove']]
+  ]) {
+    const f = fixture({labels: [label, 'unrelated'], failGetAt: 2});
+    const {error, target} = await adapter(f, '', {}, load, manualContext);
+    assert.ifError(target.error);
+    assert.match(error.message, /lookup unavailable|Helper missing/);
+    assert.deepEqual([...f.labels], ['unrelated']);
+    assert.deepEqual(f.calls, calls);
   }
 });
 
@@ -248,14 +332,16 @@ test('intentional unsafe-rename skip removes omission label and verifies visible
   assert.equal(f.calls.filter(call => call === 'remove').length, 1);
 });
 
-test('failed or skipped setup, guard and labeler clean up without requiring the helper', async () => {
-  for (const key of ['CHECKOUT_OUTCOME', 'INSTALL_OUTCOME', 'GUARD_OUTCOME', 'LABELER_OUTCOME']) {
-    for (const outcome of ['failure', 'skipped', 'cancelled', '']) {
-      const f = fixture({labels: [label, 'unrelated']});
-      const {error} = await adapter(f, '', {[key]: outcome}, () => { throw new Error('Must not require helper'); });
-      assert.match(error.message, /predecessor failed or unexpectedly skipped/);
-      assert.deepEqual([...f.labels], ['unrelated']);
-      assert.deepEqual(f.calls, ['remove']);
+test('confirmed PRs retain cleanup after failed or skipped setup, guard and labeler without the helper', async () => {
+  for (const context of [trustedContext, manualContext]) {
+    for (const key of ['TARGET_OUTCOME', 'CHECKOUT_OUTCOME', 'INSTALL_OUTCOME', 'GUARD_OUTCOME', 'LABELER_OUTCOME']) {
+      for (const outcome of ['failure', 'skipped', 'cancelled', '']) {
+        const f = fixture({labels: [label, 'unrelated']});
+        const {error} = await adapter(f, '', {[key]: outcome}, () => { throw new Error('Must not require helper'); }, context);
+        assert.match(error.message, /predecessor failed or unexpectedly skipped/);
+        assert.deepEqual([...f.labels], ['unrelated']);
+        assert.deepEqual(f.calls, context === manualContext ? ['get', 'remove'] : ['remove']);
+      }
     }
   }
   const f = fixture({labels: [label]});
@@ -277,7 +363,7 @@ test('cleanup API failures remain visible without losing the original failure or
 });
 
 test('workflow adapters use environment input and emit bounded verified snapshot outputs', async () => {
-  const run = new AsyncFunction('github', 'context', 'core', 'require', 'process', scripts[0]);
+  const run = new AsyncFunction('github', 'context', 'core', 'require', 'process', snapshotStep.with.script);
   const outputs = {};
   const f = fixture();
   await run(f.github, {repo}, {setOutput: (key, value) => { outputs[key] = value; }, info: () => {}},
@@ -287,6 +373,11 @@ test('workflow adapters use environment input and emit bounded verified snapshot
   const invalid = await adapter(f, '', {PR_NUMBER: '01'});
   assert.match(invalid.error.message, /canonical positive safe PR number/);
   assert.equal(steps.at(-1).if, 'always()');
+  assert.equal(finalizerStep.env.CONFIRMED_PR, '${{ steps.target.outputs.confirmed-pr }}');
+  assert.equal(finalizerStep.env.TARGET_OUTCOME, '${{ steps.target.outcome }}');
+  assert.equal(targetStep.if, undefined);
+  assert.ok(steps.indexOf(targetStep) < steps.findIndex(step => step.id === 'checkout'));
+  assert.ok(steps.indexOf(targetStep) < steps.findIndex(step => step.id === 'install'));
   assert.equal(workflow.on.workflow_dispatch.inputs['pull-request'].required, true);
   assert.equal(workflow.jobs.classify.env.PR_NUMBER, '${{ github.event.pull_request.number || inputs.pull-request }}');
   assert.deepEqual(workflow.permissions, {});
@@ -302,12 +393,12 @@ test('workflow adapters use environment input and emit bounded verified snapshot
   for (const script of scripts) assert.ok(!script.includes('${{'));
 });
 
-test('manual backfill rejects nondefault refs before loading helper code', () => {
+test('manual backfill rejects nondefault refs before confirmation or loading helper code', async () => {
   const step = steps.find(step => step.id === 'dispatch-ref');
   assert.equal(step.if, "github.event_name == 'workflow_dispatch'");
   assert.equal(step.env.DISPATCH_REF, '${{ github.ref }}');
   assert.equal(step.env.DEFAULT_BRANCH, '${{ github.event.repository.default_branch }}');
-  assert.ok(steps.indexOf(step) < steps.findIndex(item => item.id === 'checkout'));
+  assert.ok(steps.indexOf(step) < steps.indexOf(targetStep));
   assert.ok(!step.run.includes('${{'));
   for (const [branch, ref, success] of [
     ['master', 'refs/heads/master', true], ['main', 'refs/heads/main', true],
@@ -320,6 +411,12 @@ test('manual backfill rejects nondefault refs before loading helper code', () =>
     });
     assert.ifError(result.error);
     assert.equal(result.status === 0, success, `${branch}: ${ref}`);
-    if (!success) assert.match(result.stdout, /::error::.*default branch/);
+    if (!success) {
+      assert.match(result.stdout, /::error::.*default branch/);
+      const f = fixture({labels: [label]});
+      const final = await finalize(f, '', {outputs: {}, outcome: 'skipped'}, {CHECKOUT_OUTCOME: 'skipped'});
+      assert.match(final.error.message, /not confirmed as a pull request/);
+      assert.deepEqual(f.calls, []);
+    }
   }
 });

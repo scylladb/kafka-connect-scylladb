@@ -28,8 +28,9 @@ executing PR head code.
 `sync-labels: true` removes the omission label when filename rules stop matching.
 A single brace-union pattern must match every reported file, so combinations of
 documentation, tests and CI still qualify. Runs for a PR are serialized, including
-manual labeling. Failed or skipped classification attempts to remove unverified
-omission labels. API outages or a canceled runner can prevent cleanup, and
+manual labeling. Once the target is confirmed as a PR, failed or skipped
+classification attempts to remove unverified omission labels; unconfirmed targets
+receive no label writes. API outages or a canceled runner can prevent cleanup, and
 before/after checks cannot make classification atomic.
 
 Before generating notes, classify already merged PRs in Actions → Classify release

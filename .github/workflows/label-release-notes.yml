@@ -38,6 +38,24 @@ jobs:
             echo "::error::Run manual release-note classification from the repository default branch."
             exit 1
           fi
+      - name: Confirm pull request target
+        id: target
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const raw = process.env.PR_NUMBER;
+            if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+              throw new Error('Expected a canonical positive safe PR number');
+            }
+            const number = Number(raw);
+            if (context.eventName !== 'pull_request_target' ||
+                context.payload?.pull_request?.number !== number) {
+              const {data: pr} = await github.rest.pulls.get({
+                ...context.repo, pull_number: number
+              });
+              if (pr?.number !== number) throw new Error('Target is not the requested pull request');
+            }
+            core.setOutput('confirmed-pr', 'true');
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         id: checkout
         with:
@@ -67,6 +85,8 @@ jobs:
         if: always()
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          CONFIRMED_PR: ${{ steps.target.outputs.confirmed-pr }}
+          TARGET_OUTCOME: ${{ steps.target.outcome }}
           CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
           INSTALL_OUTCOME: ${{ steps.install.outcome }}
           GUARD_OUTCOME: ${{ steps.guard.outcome }}
@@ -81,6 +101,9 @@ jobs:
               throw new Error('Expected a canonical positive safe PR number');
             }
             const number = Number(raw);
+            if (process.env.CONFIRMED_PR !== 'true') {
+              throw new Error('Target was not confirmed as a pull request; labels were not changed');
+            }
             const removeLabel = async () => {
               try {
                 await github.rest.issues.removeLabel({
@@ -93,8 +116,8 @@ jobs:
             let removing = false;
             try {
               const unsafe = process.env.UNSAFE_RENAME === 'true';
-              if ([process.env.CHECKOUT_OUTCOME, process.env.INSTALL_OUTCOME,
-                   process.env.GUARD_OUTCOME].some(outcome => outcome !== 'success') ||
+              if ([process.env.TARGET_OUTCOME, process.env.CHECKOUT_OUTCOME,
+                   process.env.INSTALL_OUTCOME, process.env.GUARD_OUTCOME].some(outcome => outcome !== 'success') ||
                   !['true', 'false'].includes(process.env.UNSAFE_RENAME) ||
                   process.env.LABELER_OUTCOME !== (unsafe ? 'skipped' : 'success')) {
                 throw new Error('Classification predecessor failed or unexpectedly skipped');
