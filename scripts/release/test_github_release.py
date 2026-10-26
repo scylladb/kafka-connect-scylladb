@@ -64,6 +64,8 @@ class GitHubReleaseTests(unittest.TestCase):
         if args[:2] == ('git', 'rev-parse'):
             return CompletedProcess(args, 0, 'sha\n' if args[-1].endswith('^{commit}') else self.object + '\n')
         if args[:2] == ('git', 'ls-remote'):
+            if self.remote is None:
+                raise subprocess.CalledProcessError(2, args, output='')
             return CompletedProcess(args, 0, self.remote)
         if args[:3] == ('gh', 'release', 'view'):
             return CompletedProcess(args, 1 if self.existing is None else 0,
@@ -93,12 +95,20 @@ class GitHubReleaseTests(unittest.TestCase):
                 github_release.publish()
             self.assertEqual(self.calls[-1][:3], ('gh', 'release', 'view'))
 
-    def test_missing_or_mismatched_remote_tag_fails_before_release_api(self):
-        for remote in ['', 'other\trefs/tags/1.1.11\n']:
-            self.remote = remote
-            with self.assertRaisesRegex(RuntimeError, 'origin'):
-                github_release.publish()
-            self.assertEqual(self.calls[-1][:2], ('git', 'ls-remote'))
+    def test_missing_remote_tag_fails_before_release_api(self):
+        self.remote = None
+        with self.assertRaises(subprocess.CalledProcessError) as raised:
+            github_release.publish()
+        self.assertEqual(raised.exception.returncode, 2)
+        self.assertEqual(self.calls[-1][:2], ('git', 'ls-remote'))
+        self.assertFalse(any(call[0] == 'gh' for call in self.calls))
+
+    def test_mismatched_remote_tag_fails_before_release_api(self):
+        self.remote = 'other\trefs/tags/1.1.11\n'
+        with self.assertRaisesRegex(RuntimeError, 'origin'):
+            github_release.publish()
+        self.assertEqual(self.calls[-1][:2], ('git', 'ls-remote'))
+        self.assertFalse(any(call[0] == 'gh' for call in self.calls))
 
     def test_annotated_tags_compare_the_peeled_commit(self):
         self.object = 'object'
