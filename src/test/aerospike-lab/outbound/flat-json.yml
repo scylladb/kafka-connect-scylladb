@@ -1,0 +1,17 @@
+service:
+  port: 8080
+
+format:
+  mode: flat-json
+  metadata-key: metadata
+
+routing:
+  mode: static
+  destination: aerospike_flatjson
+
+producer-props:
+  bootstrap.servers:
+    - kafka:29092
+
+logging:
+  enable-console-logging: true

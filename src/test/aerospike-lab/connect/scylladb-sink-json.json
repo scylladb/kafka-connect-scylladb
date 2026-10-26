@@ -1,0 +1,13 @@
+{
+  "connector.class": "io.connect.scylladb.ScyllaDbSinkConnector",
+  "tasks.max": "1",
+  "topics": "aerospike_json",
+  "scylladb.contact.points": "scylla",
+  "scylladb.port": "9042",
+  "scylladb.keyspace": "lab",
+  "scylladb.keyspace.create.enabled": "false",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

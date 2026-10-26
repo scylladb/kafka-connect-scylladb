@@ -1,0 +1,16 @@
+service:
+  port: 8080
+
+format:
+  mode: json
+
+routing:
+  mode: static
+  destination: aerospike_json
+
+producer-props:
+  bootstrap.servers:
+    - kafka:29092
+
+logging:
+  enable-console-logging: true
