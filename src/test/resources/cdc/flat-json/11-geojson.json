@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c11\",\"digest\":\"Oe2zQtAdUUXyn/wuy+WFNRbUuxM=\"}",
+      "value": "{\"metadata\":{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c11\",\"digest\":\"Oe2zQtAdUUXyn/wuy+WFNRbUuxM=\",\"msg\":\"write\",\"gen\":1,\"lut\":1793047084220,\"exp\":0},\"loc\":{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}}"
+    }
+  ]
+}
