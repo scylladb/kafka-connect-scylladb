@@ -14,8 +14,9 @@ release process. Do not rerun the whole Release workflow to retry an upload:
 `actions/labeler` uses `.github/labeler.yml` to apply this label only when all
 reported changed filenames match known documentation,
 `src/test/`, `.github/`, release guard tests, `.gitignore`, or Renovate config.
-README, Markdown guides in `documentation/`, and guide images qualify even when
-packaged with the connector. Mixed PRs, `pom.xml`, production code/resources,
+README and Markdown guides in `documentation/` qualify even when packaged with
+the connector. The logos in `images/` are Confluent Hub package assets and remain
+visible. Mixed PRs, `pom.xml`, production code/resources,
 release helper implementation, executable scripts, deployment config, packaging
 changes and unknown paths remain visible. Safeguards check complete, stable file
 listings and the original paths of renames as well as their destinations. Moving

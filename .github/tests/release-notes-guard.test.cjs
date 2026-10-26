@@ -100,7 +100,7 @@ async function adapter(f, hash, overrides = {}, load = () => guard, context = tr
 test('canonical policy matches mixed support files and keeps runtime or unknown paths visible', async () => {
   const files = ['.github/workflows/release.yml', '.github/.hidden',
     'src/test/java/io/connect/scylladb/Test.java', 'src/test/docker/docker-compose.yml',
-    'images/guide.png', 'images/guide.svg', 'documentation/QUICKSTART.md', 'README.md',
+    'documentation/QUICKSTART.md', 'README.md',
     '.gitignore', 'renovate.json', 'scripts/release/test_guard.py',
     'scripts/release/test_workflow.py', 'scripts/release/test_github_release.py'].map(name => file(name));
   assert.equal((await guard.snapshot(fixture({files}).github, repo, 275)).omit, true);
@@ -108,14 +108,19 @@ test('canonical policy matches mixed support files and keeps runtime or unknown 
     'src/main/resources/scylla.json', 'scripts/release/github_release.py',
     'scripts/release/guard.py', 'scripts/tool.sh', 'examples/main.java',
     'docker-compose.yml', 'unknown.txt', 'documentation/nested/guide.md',
-    'documentation/example.sh', 'images/nested/guide.png']) {
+    'documentation/example.sh', 'images/nested/guide.png', 'images/guide.png',
+    'images/guide.svg', 'images/connector.png', 'images/scylla.png']) {
     const current = await guard.snapshot(fixture({files: [...files, file(name)]}).github, repo, 275);
     assert.equal(current.omit, false, name);
+  }
+  for (const name of ['images/connector.png', 'images/scylla.png']) {
+    assert.equal((await guard.snapshot(fixture({files: [file(name)]}).github, repo, 275)).omit, false, name);
   }
 });
 
 test('renames use the actual canonical policy for both prior and current paths', async () => {
-  for (const [previous, omit] of [['documentation/old.md', true], ['src/main/java/Connector.java', false], ['unknown', false]]) {
+  for (const [previous, omit] of [['documentation/old.md', true], ['src/main/java/Connector.java', false],
+    ['images/connector.png', false], ['images/scylla.png', false], ['unknown', false]]) {
     const current = await guard.snapshot(fixture({files: [file('documentation/new.md', {
       status: 'renamed', previous_filename: previous})]}).github, repo, 275);
     assert.equal(current.omit, omit);
@@ -254,7 +259,10 @@ test('lookup, listing and actual-label lookup failures propagate', async () => {
 });
 
 test('actual-label verification catches stale state after internal action skip', async () => {
-  for (const [files, labels] of [[[file('README.md')], []], [[file('src/main/java/Connector.java')], [label]]]) {
+  for (const [files, labels] of [[[file('README.md')], []], [[file('src/main/java/Connector.java')], [label]],
+    ...['images/connector.png', 'images/scylla.png'].flatMap(name => [
+      [[file(name)], [label]], [[file('README.md'), file(name)], [label]]
+    ])]) {
     const f = fixture({files, labels: [...labels, 'unrelated']});
     const original = await guard.snapshot(f.github, repo, 275);
     const {error} = await adapter(f, original.hash);
@@ -322,14 +330,16 @@ test('malformed actual-label metadata rejects verification and attempts cleanup'
 });
 
 test('intentional unsafe-rename skip removes omission label and verifies visible state', async () => {
-  const f = fixture({files: [file('documentation/new.md', {status: 'renamed', previous_filename: 'src/main/java/Connector.java'})],
-    labels: [label, 'unrelated']});
-  const original = await guard.snapshot(f.github, repo, 275);
-  const {error, logs} = await adapter(f, original.hash, {UNSAFE_RENAME: 'true', LABELER_OUTCOME: 'skipped'});
-  assert.ifError(error);
-  assert.match(logs[0], /omit=false; actual label checked/);
-  assert.deepEqual([...f.labels], ['unrelated']);
-  assert.equal(f.calls.filter(call => call === 'remove').length, 1);
+  for (const previous of ['src/main/java/Connector.java', 'images/connector.png', 'images/scylla.png']) {
+    const f = fixture({files: [file('documentation/new.md', {status: 'renamed', previous_filename: previous})],
+      labels: [label, 'unrelated']});
+    const original = await guard.snapshot(f.github, repo, 275);
+    const {error, logs} = await adapter(f, original.hash, {UNSAFE_RENAME: 'true', LABELER_OUTCOME: 'skipped'});
+    assert.ifError(error);
+    assert.match(logs[0], /omit=false; actual label checked/);
+    assert.deepEqual([...f.labels], ['unrelated']);
+    assert.equal(f.calls.filter(call => call === 'remove').length, 1);
+  }
 });
 
 test('confirmed PRs retain cleanup after failed or skipped setup, guard and labeler without the helper', async () => {
