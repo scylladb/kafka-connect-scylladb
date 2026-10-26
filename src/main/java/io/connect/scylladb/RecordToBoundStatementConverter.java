@@ -1,6 +1,7 @@
 package io.connect.scylladb;
 
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
+import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -10,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -26,10 +28,31 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
     State(BoundStatement statement) {
       this.statement = statement;
     }
+
+    /**
+     * @return the variables of the prepared statement that are still unbound, in CQL form. A delete
+     * has one for each primary key column, and must bind them all.
+     */
+    List<String> unboundVariables() {
+      final ColumnDefinitions variables = statement.getPreparedStatement().getVariableDefinitions();
+      final List<String> unbound = new ArrayList<>();
+      for (int i = 0; i < variables.size(); i++) {
+        if (!statement.isSet(i)) {
+          unbound.add(variables.get(i).getName().asCql(true));
+        }
+      }
+      return unbound;
+    }
   }
 
   RecordToBoundStatementConverter(PreparedStatement preparedStatement) {
     this.preparedStatement = preparedStatement;
+  }
+
+  @Override
+  protected boolean isPrimaryKeyColumn(String column) {
+    // A delete is prepared with a marker for each primary key column and nothing else.
+    return preparedStatement.getVariableDefinitions().contains(column);
   }
 
   protected RecordToBoundStatementConverter.State newValue() {

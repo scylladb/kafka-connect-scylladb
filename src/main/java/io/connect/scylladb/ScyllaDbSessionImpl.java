@@ -15,9 +15,11 @@ import com.datastax.oss.driver.api.querybuilder.delete.DeleteSelection;
 import com.datastax.oss.driver.api.querybuilder.insert.InsertInto;
 import com.datastax.oss.driver.api.querybuilder.insert.RegularInsert;
 import com.datastax.oss.driver.api.querybuilder.select.Select;
+import io.connect.scylladb.ScyllaDbSchemaBuilder.ScyllaDbSchemaKey;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,9 +39,9 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   private final CqlSession session;
   private final ScyllaDbSchemaBuilder schemaBuilder;
   private boolean sessionValid = true;
-  private final Map<String, TableMetadata.Table> tableMetadataCache;
-  private final Map<String, RecordToBoundStatementConverter> deleteStatementCache;
-  private final Map<String, RecordToBoundStatementConverter> insertStatementCache;
+  private final Map<ScyllaDbSchemaKey, TableMetadata.Table> tableMetadataCache;
+  private final Map<ScyllaDbSchemaKey, RecordToBoundStatementConverter> deleteStatementCache;
+  private final Map<ScyllaDbSchemaKey, RecordToBoundStatementConverter> insertStatementCache;
 
   ScyllaDbSessionImpl(ScyllaDbSinkConnectorConfig config, CqlSession session) {
     this.session = session;
@@ -76,20 +78,24 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
   @Override
   public boolean keyspaceExists(String keyspaceName){
-    return keyspaceMetadata(keyspaceName) != null;
+    return session.getMetadata().getKeyspace(keyspaceName).isPresent();
   }
 
   @Override
-  public TableMetadata.Table tableMetadata(String tableName) {
-    log.trace("tableMetadata() - tableName = '{}'", tableName);
-    TableMetadata.Table result = this.tableMetadataCache.get(tableName);
+  public TableMetadata.Table tableMetadata(String keyspace, String tableName) {
+    log.trace("tableMetadata() - keyspace = '{}', tableName = '{}'", keyspace, tableName);
+    final ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(keyspace, tableName);
+    TableMetadata.Table result = this.tableMetadataCache.get(key);
 
     if (null == result) {
-      final KeyspaceMetadata keyspaceMetadata = session.getMetadata().getKeyspace(config.keyspace).get();
+      final KeyspaceMetadata keyspaceMetadata = session.getMetadata().getKeyspace(keyspace)
+          .orElseThrow(() -> new ConnectException(String.format(
+              "Keyspace '%s' does not exist. It must be created before writing to table '%s'.",
+              keyspace, tableName)));
       final Optional<com.datastax.oss.driver.api.core.metadata.schema.TableMetadata> tableMetadata = keyspaceMetadata.getTable(tableName);
       if (tableMetadata.isPresent()) {
         result = new TableMetadataImpl.TableImpl(tableMetadata.get());
-        this.tableMetadataCache.put(tableName, result);
+        this.tableMetadataCache.put(key, result);
       } else {
         log.warn("Could not find metadata for table {} in keyspace {}. Are you sure the table exists?", tableName, keyspaceMetadata.getName().asCql(false));
         result = null;
@@ -100,13 +106,13 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public boolean tableExists(String tableName) {
-    return null != tableMetadata(tableName);
+  public boolean tableExists(String keyspace, String tableName) {
+    return null != tableMetadata(keyspace, tableName);
   }
 
   @Override
-  public void createOrAlterTable(String tableName, SinkRecord record, TopicConfigs topicConfigs) {
-    this.schemaBuilder.build(tableName, record, topicConfigs);
+  public void createOrAlterTable(String keyspace, String tableName, SinkRecord record, TopicConfigs topicConfigs) {
+    this.schemaBuilder.build(keyspace, tableName, record, topicConfigs);
   }
 
   @Override
@@ -121,15 +127,15 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
 
   @Override
-  public RecordToBoundStatementConverter delete(String tableName) {
+  public RecordToBoundStatementConverter delete(String keyspace, String tableName) {
     return this.deleteStatementCache.computeIfAbsent(
-        tableName,
-        new Function<String, RecordToBoundStatementConverter>() {
+        ScyllaDbSchemaKey.of(keyspace, tableName),
+        new Function<ScyllaDbSchemaKey, RecordToBoundStatementConverter>() {
           @Override
-          public RecordToBoundStatementConverter apply(String tableName) {
-            DeleteSelection statementStart = QueryBuilder.deleteFrom(config.keyspace, tableName);
+          public RecordToBoundStatementConverter apply(ScyllaDbSchemaKey key) {
+            DeleteSelection statementStart = QueryBuilder.deleteFrom(keyspace, tableName);
             Delete statement = null;
-            TableMetadata.Table tableMetadata = tableMetadata(tableName);
+            TableMetadata.Table tableMetadata = tableMetadata(keyspace, tableName);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
               if (statement == null) {
                 statement = statementStart.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
@@ -147,10 +153,10 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     );
   }
 
-  private PreparedStatement createInsertPreparedStatement(String tableName, TopicConfigs topicConfigs) {
-    InsertInto insertInto = QueryBuilder.insertInto(config.keyspace, tableName);
+  private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, TopicConfigs topicConfigs) {
+    InsertInto insertInto = QueryBuilder.insertInto(keyspace, tableName);
     RegularInsert regularInsert = null;
-    TableMetadata.Table tableMetadata = tableMetadata(tableName);
+    TableMetadata.Table tableMetadata = tableMetadata(keyspace, tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
       if (regularInsert == null) {
         regularInsert = insertInto.value(CqlIdentifier.fromInternal(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));
@@ -170,17 +176,17 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   }
 
   @Override
-  public RecordToBoundStatementConverter insert(String tableName, TopicConfigs topicConfigs) {
+  public RecordToBoundStatementConverter insert(String keyspace, String tableName, TopicConfigs topicConfigs) {
     if (topicConfigs != null && topicConfigs.getTtl() != null) {
-      PreparedStatement preparedStatement = createInsertPreparedStatement(tableName, topicConfigs);
+      PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, topicConfigs);
       return new RecordToBoundStatementConverter(preparedStatement);
     } else {
       return this.insertStatementCache.computeIfAbsent(
-              tableName,
-              new Function<String, RecordToBoundStatementConverter>() {
+              ScyllaDbSchemaKey.of(keyspace, tableName),
+              new Function<ScyllaDbSchemaKey, RecordToBoundStatementConverter>() {
                 @Override
-                public RecordToBoundStatementConverter apply(String tableName) {
-                  PreparedStatement preparedStatement = createInsertPreparedStatement(tableName, topicConfigs);
+                public RecordToBoundStatementConverter apply(ScyllaDbSchemaKey key) {
+                  PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, topicConfigs);
                   return new RecordToBoundStatementConverter(preparedStatement);
                 }
               }
@@ -196,7 +202,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
       OffsetAndMetadata metadata) {
     if (null == this.offsetPreparedStatement) {
       this.offsetPreparedStatement =
-              createInsertPreparedStatement(this.config.offsetStorageTable, null);
+              createInsertPreparedStatement(this.config.keyspace, this.config.offsetStorageTable, null);
     }
     log.debug(
             "getAddOffsetsStatement() - Setting offset to {}:{}:{}",
@@ -248,8 +254,9 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
   @Override
   public void onTableChanged(String keyspace, String tableName) {
-    this.tableMetadataCache.remove(tableName);
-    this.deleteStatementCache.remove(tableName);
-    this.insertStatementCache.remove(tableName);
+    final ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(keyspace, tableName);
+    this.tableMetadataCache.remove(key);
+    this.deleteStatementCache.remove(key);
+    this.insertStatementCache.remove(key);
   }
 }

@@ -6,15 +6,19 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 
+import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.querybuilder.SchemaBuilder;
 import com.datastax.oss.driver.api.querybuilder.schema.CreateKeyspace;
 import com.datastax.oss.driver.api.querybuilder.schema.CreateTable;
 import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableMap;
+import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.VersionUtil;
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.common.config.Config;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.ConfigValue;
 import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -67,6 +71,10 @@ public class ScyllaDbSinkConnector extends SinkConnector {
                 .withPartitionKey("partition", DataTypes.INT)
                 .withColumn("offset", DataTypes.BIGINT);
         session.executeStatement(createOffsetStorage.build());
+      }
+      final List<String> missingKeyspaces = missingTopicKeyspaces(session, config);
+      if (!missingKeyspaces.isEmpty()) {
+        throw new ConnectException(String.join(" ", missingKeyspaces));
       }
 
     } catch (IOException ex) {
@@ -133,7 +141,13 @@ public class ScyllaDbSinkConnector extends SinkConnector {
     boolean hasErrors = result.configValues().stream().anyMatch(c -> !(c.errorMessages().isEmpty()) );
     if (!hasErrors)
     {
-      config = new ScyllaDbSinkConnectorConfig(connectorConfigs);
+      try {
+        config = new ScyllaDbSinkConnectorConfig(connectorConfigs);
+      } catch (ConfigException ex) {
+        // Per-topic settings are checked only when the config is built.
+        getConfigValue(result, ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG).addErrorMessage(ex.getMessage());
+        return result;
+      }
       // Make trial connection
       ScyllaDbSessionFactory sessionFactory = new ScyllaDbSessionFactory();
       try (ScyllaDbSession session = sessionFactory.newSession(config)) {
@@ -157,6 +171,7 @@ public class ScyllaDbSinkConnector extends SinkConnector {
               keyspaceConfig.addErrorMessage("Keyspace " + config.keyspace + " not found.");
             }
           }
+          missingTopicKeyspaces(session, config).forEach(keyspaceConfig::addErrorMessage);
         }
       } catch (Exception ex) {
         ConfigValue contactPoints = getConfigValue(result, ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG);
@@ -165,6 +180,25 @@ public class ScyllaDbSinkConnector extends SinkConnector {
       }
     }
     return result;
+  }
+
+  /**
+   * Per-topic settings may target any keyspace. The connector creates only
+   * <code>scylladb.keyspace</code>, and only when keyspace creation is enabled, so report each other
+   * target keyspace that does not exist.
+   */
+  static List<String> missingTopicKeyspaces(ScyllaDbSession session, ScyllaDbSinkConnectorConfig config) {
+    final List<String> errors = new ArrayList<>();
+    for (Map.Entry<String, TopicConfigs> entry : new TreeMap<>(config.topicWiseConfigs).entrySet()) {
+      final String keyspace = entry.getValue().getKeyspace();
+      final boolean created = config.keyspaceCreateEnabled
+              && CqlIdentifier.fromCql(keyspace).equals(CqlIdentifier.fromCql(config.keyspace));
+      if (!created && !session.keyspaceExists(keyspace)) {
+        errors.add(String.format("Keyspace '%s' used by the per-topic settings of topic '%s' does not exist.",
+                keyspace, entry.getKey()));
+      }
+    }
+    return errors;
   }
 
   private ConfigValue getConfigValue(Config config, String configName){
