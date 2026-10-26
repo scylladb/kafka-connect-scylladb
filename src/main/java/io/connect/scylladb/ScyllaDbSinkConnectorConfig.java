@@ -7,10 +7,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import com.datastax.oss.driver.api.core.ConsistencyLevel;
+import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.shaded.guava.common.base.Strings;
 import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableSet;
@@ -19,6 +22,8 @@ import io.connect.scylladb.utils.NullOrReadableFile;
 import io.connect.scylladb.utils.VisibleIfEqual;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.connect.sink.SinkTask;
 
 
 import io.confluent.kafka.connect.utils.config.ConfigUtils;
@@ -60,6 +65,12 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final Integer ttl;
   public final BehaviorOnError behaviourOnError;
   public final List<String> cipherSuites;
+  // Topics already warned about deprecated or ignored per-topic setting names, so each is logged once per task.
+  final Set<String> topicSettingWarnings = ConcurrentHashMap.newKeySet();
+  // Topics listed in the sink's 'topics' setting; empty when it subscribes with 'topics.regex'.
+  final Set<String> listedTopics;
+  // Whether the sink subscribes with 'topics.regex', so any name may be one of its topics.
+  final boolean topicsByRegex;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
@@ -114,19 +125,37 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
 
+    final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
+    this.listedTopics = topics == null ? Collections.emptySet()
+            : Arrays.stream(topics.toString().split(",")).map(String::trim).collect(Collectors.toSet());
+    final Object topicsRegex = originals.get(SinkTask.TOPICS_REGEX_CONFIG);
+    this.topicsByRegex = topicsRegex != null && !topicsRegex.toString().trim().isEmpty();
+
+    // Keyed by the topic name exactly as it appears in SinkRecord.topic().
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
+    Map<String, String[]> topicTargets = new HashMap<>();
     for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
       final String name2 = entry.getKey();
       if (name2.startsWith("topic.") && hasTopicWiseConfigSuffix(name2)) {
-        final String topicName = this.tryMatchTopicName(name2);
+        final Matcher m = this.matchTopicSetting(name2);
+        final String topicName = m.group(1);
+        final String[] target = {cqlName(name2, m.group(2)), cqlName(name2, m.group(3))};
         log.debug("Interpreting " + name2 + " as custom TopicWiseConfig for topic " + topicName);
+        final String[] previousTarget = topicTargets.putIfAbsent(topicName, target);
+        if (previousTarget != null && !sameTarget(previousTarget, target)) {
+          throw new ConfigException(String.format(
+                  "Topic '%s' is configured with two different targets: '%s.%s' and '%s.%s'. "
+                          + "All topic.%s.<keyspace>.<table>.* settings must use the same keyspace and table.",
+                  topicName, previousTarget[0], previousTarget[1], target[0], target[1], topicName));
+        }
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
-        topicMap.put(name2.split("\\.")[name2.split("\\.").length - 1], entry.getValue());
+        topicMap.put(m.group(4), entry.getValue());
       }
     }
     topicWiseConfigs = new HashMap<>();
     for (Map.Entry<String, Map<String, String>> topicWiseConfig : topicWiseConfigsMap.entrySet()) {
-      TopicConfigs topicConfigs = new TopicConfigs(topicWiseConfig.getValue(), this);
+      final String[] target = topicTargets.get(topicWiseConfig.getKey());
+      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this);
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
   }
@@ -566,12 +595,28 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             );
   }
 
-  private String tryMatchTopicName(final String name) {
+  private Matcher matchTopicSetting(final String name) {
     final Matcher m = ScyllaDbSinkConnectorConfig.TOPIC_KS_TABLE_SETTING_PATTERN.matcher(name);
     if (m.matches()) {
-      return m.group(1);
+      return m;
     }
     throw new IllegalArgumentException("The setting: " + name + " does not match topic.keyspace.table nor topic.codec regular expression pattern");
+  }
+
+  // Unquoted CQL names start with a letter and hold only letters, digits and '_', and are no keyword.
+  private static String cqlName(String setting, String name) {
+    try {
+      CqlIdentifier.fromCql(name);
+      return name;
+    } catch (IllegalArgumentException e) {
+      throw new ConfigException(setting, name, "Keyspace and table names must be valid CQL names. " + e.getMessage());
+    }
+  }
+
+  // Unquoted CQL names are case-insensitive, so 'ks.T1' and 'ks.t1' name the same table.
+  private static boolean sameTarget(String[] a, String[] b) {
+    return CqlIdentifier.fromCql(a[0]).equals(CqlIdentifier.fromCql(b[0]))
+            && CqlIdentifier.fromCql(a[1]).equals(CqlIdentifier.fromCql(b[1]));
   }
 
   private boolean hasTopicWiseConfigSuffix(final String name) {

@@ -182,6 +182,25 @@ These configurations can be specified for multiple Kafka topics from which recor
 Also, these topic level configurations will override the behavior of Connector level configurations such as 
 ``scylladb.consistency.level``, ``scylladb.deletes.enabled`` and ``scylladb.ttl``
 
+Records from `my_topic` are written to the table `my_table` in the keyspace `my_ks`:
+
+* `my_topic` is the topic name as seen in a SinkRecord, after all Single Message Transforms. It may contain
+  `.` and `-`.
+* `my_ks` and `my_table` are CQL names and cannot contain `.`. Unquoted names are case-insensitive, as in CQL,
+  and other names, such as `1ks` or `a-b`, fail validation.
+* All settings of one topic must name the same `my_ks` and `my_table`.
+* `my_ks` must already exist. The connector creates only ``scylladb.keyspace``, when
+  ``scylladb.keyspace.create.enabled`` is set, and validation fails when `my_ks` is missing.
+* Topics without these settings are written to ``scylladb.keyspace``, to a table named after the topic
+  with `.` and `-` replaced by `_`.
+
+**Note**: In earlier versions the `my_ks` and `my_table` parts were ignored: records were always written to
+``scylladb.keyspace``, to the table named after the topic. Settings for topics containing `.` or `-` were
+ignored unless written with the sanitized topic name (for example `topic.my_topic.ks.table.ttlSeconds` for
+the topic `my.topic`). That sanitized form is still accepted, with a deprecation warning,
+unless the sanitized name is itself listed in ``topics``. It is not accepted under ``topics.regex``, where
+the sanitized name may be another subscribed topic.
+
 ``topic.<my_topic>.<my_ks>.<my_table>.mapping``
 
   For mapping topic and fields from Kafka record's key, value and headers to ScyllaDB table and its columns.
