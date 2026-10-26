@@ -20,6 +20,7 @@ import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,6 +106,21 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     return result;
   }
 
+  /**
+   * Metadata of a table that statements are prepared for. The table can be missing because the
+   * connector cannot create it for schemaless records, or because it was dropped.
+   */
+  private TableMetadata.Table existingTableMetadata(String keyspace, String tableName) {
+    final TableMetadata.Table result = tableMetadata(keyspace, tableName);
+    if (null == result) {
+      throw new DataException(String.format(
+          "Table '%s.%s' does not exist. The connector creates tables only from records with a schema, "
+              + "so create it before writing records without one, and check that it was not dropped.",
+          keyspace, tableName));
+    }
+    return result;
+  }
+
   @Override
   public boolean tableExists(String keyspace, String tableName) {
     return null != tableMetadata(keyspace, tableName);
@@ -135,7 +151,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
           public RecordToBoundStatementConverter apply(ScyllaDbSchemaKey key) {
             DeleteSelection statementStart = QueryBuilder.deleteFrom(keyspace, tableName);
             Delete statement = null;
-            TableMetadata.Table tableMetadata = tableMetadata(keyspace, tableName);
+            TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
               if (statement == null) {
                 statement = statementStart.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
@@ -156,7 +172,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, TopicConfigs topicConfigs) {
     InsertInto insertInto = QueryBuilder.insertInto(keyspace, tableName);
     RegularInsert regularInsert = null;
-    TableMetadata.Table tableMetadata = tableMetadata(keyspace, tableName);
+    TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
       if (regularInsert == null) {
         regularInsert = insertInto.value(CqlIdentifier.fromInternal(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));

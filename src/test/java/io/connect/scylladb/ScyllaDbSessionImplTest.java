@@ -5,6 +5,7 @@ import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.metadata.Metadata;
 import com.datastax.oss.driver.api.core.metadata.schema.KeyspaceMetadata;
 import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.errors.DataException;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -12,6 +13,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -48,6 +50,18 @@ public class ScyllaDbSessionImplTest {
   }
 
   @Test
+  public void shouldNameMissingTableOnInsert() {
+    DataException ex = assertThrows(DataException.class, () -> session.insert("ks", "missing", null));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("'ks.missing' does not exist"));
+  }
+
+  @Test
+  public void shouldNameMissingTableOnDelete() {
+    DataException ex = assertThrows(DataException.class, () -> session.delete("ks", "missing"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("'ks.missing' does not exist"));
+  }
+
+  @Test
   public void shouldShareCachedMetadataBetweenSpellingsOfOneTable() {
     KeyspaceMetadata keyspace = mock(KeyspaceMetadata.class);
     when(keyspace.getTable(anyString())).thenReturn(Optional.of(
@@ -61,5 +75,10 @@ public class ScyllaDbSessionImplTest {
     session.onTableChanged("ks", "tbl");
     session.tableMetadata("KS", "TBL");
     verify(keyspace, times(2)).getTable(anyString());
+  }
+
+  @Test
+  public void shouldReportMissingTableAsAbsent() {
+    assertEquals(false, session.tableExists("ks", "missing"));
   }
 }
