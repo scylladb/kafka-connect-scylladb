@@ -578,10 +578,7 @@ public class ScyllaDbSinkConnectorIT {
     verify(this.sinkTaskContext, times(1)).assignment();
   }
 
-  //TODO: Fix this test
-  //Fails due to NullPointerException inside ScyllaDbSinkTaskHelper
   @Test
-  @Disabled
   public void deleteMissingTable() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -1067,6 +1064,9 @@ public class ScyllaDbSinkConnectorIT {
     this.task.start(settings);
 
     this.task.put(ImmutableList.of(
+            // The table does not exist yet, so this delete is skipped; the writes after it must still
+            // create the table from the full mapping.
+            SinkRecordUtil.delete(topic, struct("key", "id", Schema.Type.INT64, true, 3L)),
             write(topic,
                     struct("key", "id", Schema.Type.INT64, true, 1L),
                     struct("value", "id", Schema.Type.INT64, true, 1L, "name", Schema.Type.STRING, true, "first")),

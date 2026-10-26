@@ -16,12 +16,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -140,6 +142,15 @@ public class ScyllaDbSinkTaskHelperTest {
     verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(record), topicConfigs.capture());
     assertEquals(Schema.STRING_SCHEMA,
         topicConfigs.getValue().getTableColumnMap().get("name").getKafkaRecordField().schema());
+  }
+
+  @Test
+  public void shouldSkipDeleteFromMissingTable() {
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
+    when(session.tableExists("ks1", "t1")).thenReturn(false);
+
+    assertNull(helper().getBoundStatementForRecord(tombstone(TOPIC, 1L)));
+    verify(session, never()).delete(anyString(), anyString());
   }
 
   @Test
