@@ -27,6 +27,7 @@ The ScyllaDB Sink Connector accepts two data formats from kafka. They are:
 
 This connector uses the topic name to determine the name of the table to write to. You can change this dynamically by using a
 transform like [Regex Router](<https://kafka.apache.org/documentation/#connect_transforms>) to change the topic name.
+Per-topic `topic.<topic>.<ks>.<table>.*` settings override this table; see [CONFIG.md](documentation/CONFIG.md).
 
 To run this connector you can you a dockerized ScyllaDB instance. Follow this [link](https://hub.docker.com/r/scylladb/scylla/) for use.
 
@@ -39,7 +40,8 @@ You can configure this connector to manage the schema on the ScyllaDB cluster. W
 is ignored. This is to avoid the potential issues around changing a primary key on an existing table. The key schema is used to
 generate a primary key for the table when it is created. These fields must also be in the value schema. Data
 written to the table is always read from the value from Apache Kafka. This connector uses the topic to determine the name of
-the table to write to. This can be changed on the fly by using a transform to change the topic name.
+the table to write to, unless per-topic `<ks>.<table>` settings name another (see [CONFIG.md](documentation/CONFIG.md)).
+This can be changed on the fly by using a transform to change the topic name.
 
 --------------------------
 Time To Live (TTL) Support
