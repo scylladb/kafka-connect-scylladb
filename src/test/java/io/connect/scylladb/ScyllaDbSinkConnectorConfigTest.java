@@ -95,5 +95,24 @@ public class ScyllaDbSinkConnectorConfigTest {
     assertTrue(ex.getMessage(), ex.getMessage().contains("topic.a.ks1.\"\".mapping"));
   }
 
+  @Test
+  public void shouldRetryWithoutLimitByDefault() {
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertEquals(-1, config.maxRetries);
+    assertEquals(3000L, config.retryBackoffMs);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectMaxRetriesBelowMinusOne() {
+    settings.put(ScyllaDbSinkConnectorConfig.MAX_RETRIES_CONFIG, "-2");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectZeroRetryBackoff() {
+    settings.put(ScyllaDbSinkConnectorConfig.RETRY_BACKOFF_MS_CONFIG, "0");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
   //TODO: Add more tests
 }

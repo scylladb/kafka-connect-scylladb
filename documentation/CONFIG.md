@@ -269,6 +269,27 @@ the sanitized name may be another subscribed topic.
   * Importance: Medium
   * Default Value: null
 
+``scylladb.max.retries``
+
+  The number of times a batch is retried after consecutive transient write failures, such as
+  ScyllaDB being unreachable or a timeout, before the task fails. 0 fails the task on the first
+  one; -1 retries without limit. See [Error handling](#error-handling).
+
+  * Type: Int
+  * Importance: Medium
+  * Valid Values: [-1,...]
+  * Default Value: -1
+
+``scylladb.retry.backoff.ms``
+
+  The time to wait before retrying a batch after a transient write failure. The worker never waits
+  past its next offset commit (``offset.flush.interval.ms``).
+
+  * Type: Long
+  * Importance: Low
+  * Valid Values: [1,...]
+  * Default Value: 3000
+
 ``scylladb.offset.storage.table.enable``
 
   If true, Kafka consumer offsets will be additionally stored in ScyllaDB table. If false, connector will skip writing offset
@@ -301,6 +322,44 @@ Logs the error via connect-reporter when an error occurs while processing or ins
 * Valid Values: [FAIL, LOG, IGNORE]
 * Importance: medium
 
+When the worker provides an errant record reporter (``errors.deadletterqueue.topic.name`` or
+``errors.log.enable`` is set, see [Error handling](#error-handling)), failed records are reported to
+it instead, ``errors.tolerance`` applies, and this setting is not used.
+
+
+### Error handling
+
+The connector tells three kinds of failures apart:
+
+* **Record errors**: ScyllaDB rejects the record itself (for example an empty partition key), or
+  the record cannot be converted. Retrying cannot help. When the worker provides an errant record
+  reporter, the record is reported to it and ``errors.tolerance`` decides: with ``none`` (the Kafka
+  Connect default) the task fails, with ``all`` the task continues. The record goes to the dead
+  letter queue when ``errors.deadletterqueue.topic.name`` is set; with only ``errors.log.enable``
+  it is logged. Without a reporter, ``behavior.on.error`` decides.
+* **Transient errors**: ScyllaDB is unreachable, times out, is overloaded or rate-limits a
+  partition. The task waits ``scylladb.retry.backoff.ms`` and the batch is delivered again, up to
+  ``scylladb.max.retries`` times in a row; the next failure fails the task. By default it retries
+  without limit, so an outage blocks the task until ScyllaDB is back, with no data loss. A batch is
+  retried as a whole: its record errors are handled once the rest of it is written. A write that a
+  replica rejects for exceeding a large data threshold reaches the connector as an ordinary write
+  failure, so it is retried too; set ``scylladb.max.retries`` to keep such a record from blocking
+  the task.
+* **Fatal errors**: rejected credentials or permissions, an invalid query or configuration (such as
+  a missing keyspace, table or column, or a table whose primary key differs from the mapping), or
+  an unexpected error. The task fails. A delete from a missing table is skipped with a warning.
+
+With ``scylladb.offset.storage.table.enable=true`` (the default) the task reads its offsets from
+ScyllaDB when it starts, so an outage at that moment fails the task. Writes to the offset table are
+retried by the worker and do not count against ``scylladb.max.retries``.
+
+To send record errors to a dead letter queue, use the standard Kafka Connect settings:
+
+```
+errors.tolerance=all
+errors.deadletterqueue.topic.name=scylladb-sink-dlq
+errors.deadletterqueue.context.headers.enable=true
+```
 
 ### Confluent Platform Configurations.
 

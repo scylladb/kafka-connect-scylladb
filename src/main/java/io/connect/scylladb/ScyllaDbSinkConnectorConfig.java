@@ -71,6 +71,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   final Set<String> listedTopics;
   // Whether the sink subscribes with 'topics.regex', so any name may be one of its topics.
   final boolean topicsByRegex;
+  public final int maxRetries;
+  public final long retryBackoffMs;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
@@ -124,6 +126,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
+    this.maxRetries = getInt(MAX_RETRIES_CONFIG);
+    this.retryBackoffMs = getLong(RETRY_BACKOFF_MS_CONFIG);
 
     final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
     this.listedTopics = topics == null ? Collections.emptySet()
@@ -294,7 +298,10 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "``log``\n"
           + "Logs the error via connect-reporter when an error occurs while processing or "
           + "inserting records into ScyllaDB and continues to process next set of records, "
-          + "available in the kafka topics.";
+          + "available in the kafka topics.\n"
+          + "When the Connect worker provides an errant record reporter "
+          + "(``errors.deadletterqueue.topic.name`` or ``errors.log.enable`` is set), failed records "
+          + "are reported to it instead, ``errors.tolerance`` applies, and this setting is not used.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -304,7 +311,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String WRITE_GROUP = "Write";
 
   public static ConfigDef config() {
-    return new ConfigDef()
+    return defineRetries(new ConfigDef())
             .define(
                     CONTACT_POINTS_CONFIG,
                     ConfigDef.Type.STRING,
@@ -593,6 +600,44 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     BEHAVIOR_ON_ERROR_DISPLAY,
                     new ListRecommender(Arrays.asList(toStringArray(BehaviorOnError.values())))
             );
+  }
+
+  public static final String MAX_RETRIES_CONFIG = "scylladb.max.retries";
+  public static final int MAX_RETRIES_DEFAULT = -1;
+  private static final String MAX_RETRIES_DOC = "The number of times a batch is retried after "
+          + "consecutive transient write failures, such as ScyllaDB being unreachable or a timeout, "
+          + "before the task fails. 0 fails the task on the first one; -1 retries without limit.";
+
+  public static final String RETRY_BACKOFF_MS_CONFIG = "scylladb.retry.backoff.ms";
+  public static final long RETRY_BACKOFF_MS_DEFAULT = 3000L;
+  private static final String RETRY_BACKOFF_MS_DOC = "The time to wait before retrying a batch after "
+          + "a transient write failure. The worker never waits past its next offset commit "
+          + "(``offset.flush.interval.ms``).";
+
+  private static ConfigDef defineRetries(ConfigDef configDef) {
+    return configDef
+            .define(
+                    MAX_RETRIES_CONFIG,
+                    ConfigDef.Type.INT,
+                    MAX_RETRIES_DEFAULT,
+                    ConfigDef.Range.atLeast(-1),
+                    ConfigDef.Importance.MEDIUM,
+                    MAX_RETRIES_DOC,
+                    WRITE_GROUP,
+                    10,
+                    ConfigDef.Width.SHORT,
+                    "Max retries")
+            .define(
+                    RETRY_BACKOFF_MS_CONFIG,
+                    ConfigDef.Type.LONG,
+                    RETRY_BACKOFF_MS_DEFAULT,
+                    ConfigDef.Range.atLeast(1),
+                    ConfigDef.Importance.LOW,
+                    RETRY_BACKOFF_MS_DOC,
+                    WRITE_GROUP,
+                    11,
+                    ConfigDef.Width.SHORT,
+                    "Retry backoff (in ms)");
   }
 
   private Matcher matchTopicSetting(final String name) {
