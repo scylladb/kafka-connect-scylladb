@@ -25,7 +25,7 @@ The ScyllaDB Sink Connector accepts two data formats from kafka. They are:
 
 **Note:** In case of JSON without schema, the table should already be present in the keyspace.
 
-Schemaless JSON collections must match the CQL column type. JSON arrays of objects can be
+Schemaless JSON values are converted to the CQL column type. JSON arrays of objects can be
 stored as lists of frozen user-defined types. For example, this value:
 
 ```json
@@ -37,7 +37,7 @@ stored as lists of frozen user-defined types. For example, this value:
 }
 ```
 
-requires a UDT and table column such as:
+can be written to a UDT and table column such as:
 
 ```sql
 CREATE TYPE system_sid (
@@ -51,9 +51,10 @@ CREATE TABLE ustime (
 );
 ```
 
-Declaring `systems_sids` as `list<text>` is only valid when every JSON array element is a
-string. The connector uses the prepared statement's CQL type to recursively convert nested
-schemaless lists, maps, and UDT values.
+If `systems_sids` is declared as `list<text>` instead, each object is stored as JSON text. The
+connector uses the prepared statement's CQL type to recursively convert nested schemaless lists,
+sets, maps, and UDT values; see [Schemaless value types](documentation/CONFIG.md#schemaless-value-types)
+for the full mapping.
 
 This connector uses the topic name to determine the name of the table to write to. You can change this dynamically by using a
 transform like [Regex Router](<https://kafka.apache.org/documentation/#connect_transforms>) to change the topic name.
