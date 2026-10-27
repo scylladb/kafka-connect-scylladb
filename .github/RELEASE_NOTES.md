@@ -56,11 +56,10 @@ Rerun classification after changes, and investigate any failed or skipped run
 or unverified omission label before proceeding.
 
 Release publication remains asynchronous: it does not wait for classification.
-This manual check is required before generating notes. If it is missed, notes
-can retain omitted production changes or unwanted support entries. This PR,
-including later review cycles and resumed work, excludes an automated release
-barrier; no follow-up synchronization work is scheduled. Preserve already
-published notes when retrying artifact uploads.
+This manual check is required before generating notes for every release. If it
+is missed, notes can retain omitted production changes or unwanted support
+entries. There is no automated release barrier or scheduled synchronization
+follow-up. Preserve already published notes when retrying artifact uploads.
 
 Maintainers can apply the label manually after verifying every change is
 support-only; the next classifier run reconciles it with these rules. Manual
