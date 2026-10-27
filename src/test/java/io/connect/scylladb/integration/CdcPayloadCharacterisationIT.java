@@ -22,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -265,19 +266,13 @@ public class CdcPayloadCharacterisationIT {
   }
 
   @Test
-  public void base64StringFailsToBindToBlob() {
-    // Bytes arrive base64-encoded and no codec maps a string to a blob column (#30, #101).
-    // #287 decodes them.
-    assertCodecNotFound(putFlattened("10-hyperloglog"), "visitors");
-    assertCodecNotFound(putFlattened("15-scalar-types"), "raw");
-  }
-
-  private static void assertCodecNotFound(Throwable error, String field) {
-    assertNotNull(error, field);
-    String causes = causes(error);
-    assertTrue(causes.contains("processing field '" + field + "'"), causes);
-    assertTrue(causes.contains("Codec not found"), causes);
-    assertEquals(0, rowCount());
+  public void base64StringIsDecodedIntoBlob() {
+    // #287 decodes base64 strings into blob columns; before it no codec mapped them (#30, #101).
+    assertNull(putFlattened("10-hyperloglog"));
+    assertNotNull(row("c10").getByteBuffer("visitors"));
+    assertNull(putFlattened("15-scalar-types"));
+    assertEquals(ByteBuffer.wrap(new byte[] {0x00, (byte) 0xFF, 0x10}),
+        row("c15").getByteBuffer("raw"));
   }
 
   private static long finalLut(String caseName) {
