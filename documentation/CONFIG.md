@@ -315,7 +315,7 @@ handled by ``behavior.on.error``. The table must already exist.
 
 | JSON value | CQL column types |
 |---|---|
-| string | `text`, `ascii`, `uuid`, `timeuuid`, `inet` (single-quoted, as `'127.0.0.1'`), `varint`, `duration`, `tinyint`, `smallint`, `int`, `bigint`, `timestamp` (ISO-8601 instant, as `2024-01-01T00:00:00Z`) |
+| string | `text`, `ascii`, `uuid`, `timeuuid`, `inet` (single-quoted, as `'127.0.0.1'`), `varint`, `duration`, `tinyint`, `smallint`, `int`, `bigint`, `timestamp` (ISO-8601 instant, as `2024-01-01T00:00:00Z`), `blob` (base64) |
 | integer | `bigint`, `int`, `varint`, `decimal`, `double`; a value outside an `int` column's range fails the record. `JsonConverter` reads integers as 64-bit values and wraps larger ones before the connector sees them, so those are stored wrong, even in `varint` and `decimal` |
 | decimal number | `double`, `decimal` |
 | boolean | `boolean` |
@@ -325,5 +325,5 @@ handled by ``behavior.on.error``. The table must already exist.
 | null | any type except inside a list, set or map; the column or UDT field is set to null |
 
 Collections nest: a `list<frozen<my_type>>` column takes an array of objects. In records with a
-schema, `INT64` fields also convert to `double`. An `INT64` field written to an `int` column fails
-the record when its value is outside the `int` range.
+schema, `INT64` fields also convert to `double`, and base64 `STRING` fields to `blob`. An `INT64`
+field written to an `int` column fails the record when its value is outside the `int` range.

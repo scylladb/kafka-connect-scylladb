@@ -213,6 +213,23 @@ public class RecordToBoundStatementConverterTest {
   }
 
   @Test
+  public void decodesBase64StringsIntoBlobs() {
+    column(0, "chunks", DataTypes.listOf(DataTypes.BLOB));
+
+    assertEquals(Collections.singletonList(ByteBuffer.wrap(new byte[] {0, -1, 16})),
+        bind("chunks", Collections.singletonList("AP8Q")));
+  }
+
+  @Test
+  public void rejectsInvalidBase64() {
+    column(0, "chunks", DataTypes.listOf(DataTypes.BLOB));
+
+    DataException e = assertThrows(DataException.class, () -> bind("chunks", Collections.singletonList("not base64!")));
+    assertTrue(e.getMessage(), e.getMessage().contains("'chunks' value cannot be converted"));
+    assertTrue(String.valueOf(e.getCause()), e.getCause() instanceof IllegalArgumentException);
+  }
+
+  @Test
   public void rejectsIntegersOutsideTheIntRange() {
     column(0, "counts", DataTypes.listOf(DataTypes.INT));
 

@@ -13,6 +13,7 @@ import io.connect.scylladb.ScyllaDbSinkTask;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -29,10 +30,12 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
-/** Writes schemaless values into collection, UDT and text columns and reads them back. */
+/** Writes schemaless values into collection, UDT, blob and text columns and reads them back. */
 public class SchemalessCqlTypesIT {
 
   private static final String KEYSPACE = "schemaless_types";
@@ -69,7 +72,7 @@ public class SchemalessCqlTypesIT {
         session.execute("CREATE TABLE " + KEYSPACE + "." + TABLE + " ("
             + "id text PRIMARY KEY, tags list<text>, labels set<text>, counts list<int>, "
             + "coordinates list<double>, attrs map<text, bigint>, small map<text, int>, "
-            + "systems_sids list<frozen<system_sid>>, notes list<text>, loc text)");
+            + "systems_sids list<frozen<system_sid>>, notes list<text>, raw blob, loc text)");
         session.execute("CREATE TABLE " + KEYSPACE + "." + STRUCT_TABLE + " ("
             + "id text PRIMARY KEY, totals list<bigint>, chunks list<blob>, parts map<text, blob>)");
         return;
@@ -144,6 +147,25 @@ public class SchemalessCqlTypesIT {
   }
 
   @Test
+  public void base64StringRoundTripsAsBlob() {
+    Map<String, Object> value = value("blob");
+    value.put("raw", "AP8Q");
+    put(value);
+
+    assertEquals(ByteBuffer.wrap(new byte[] {0, -1, 16}), row(TABLE, "blob").getByteBuffer("raw"));
+  }
+
+  @Test
+  public void invalidBase64FailsTheRecord() {
+    Map<String, Object> value = value("bad-blob");
+    value.put("raw", "not base64!");
+
+    ConnectException e = assertThrows(ConnectException.class, () -> put(value));
+    assertTrue(base64Rejected(e), "expected a base64 decoding error in " + e);
+    assertNull(row(TABLE, "bad-blob"));
+  }
+
+  @Test
   public void objectsInTextListRoundTripAsJson() {
     Map<String, Object> sid = new LinkedHashMap<>();
     sid.put("sid", Arrays.asList("a"));
@@ -213,6 +235,15 @@ public class SchemalessCqlTypesIT {
   private void put(Map<String, Object> value) {
     task.put(Collections.singletonList(
         SinkRecordUtil.write(TABLE, null, Collections.singletonMap("id", value.get("id")), null, value)));
+  }
+
+  private static boolean base64Rejected(Throwable e) {
+    for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+      if (cause instanceof IllegalArgumentException && String.valueOf(cause.getMessage()).contains("base64")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static Row row(String table, String id) {
