@@ -8,6 +8,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -249,5 +250,100 @@ public class ScyllaDbSinkConnectorConfigTest {
     settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "lut");
     ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
     assertTrue(ex.getMessage(), ex.getMessage().contains(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG));
+  }
+
+  @Test
+  public void shouldLetPerTopicDeleteSettingsOverrideConnectorOnes() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    settings.put("topic.a.ks.t.deletesValues", "d,remove");
+    settings.put("topic.b.ks.t.deletesField", "value.metadata.op");
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    Map<String, Object> value = new HashMap<>();
+    value.put("op", "remove");
+    value.put("metadata", Collections.singletonMap("op", "delete"));
+    SinkRecord record = new SinkRecord("a", 0, null, null, null, value, 0L);
+    assertEquals(false, config.deleteFlag.matches(record));
+    assertEquals(true, config.topicWiseConfigs.get("a").getDeleteFlag().matches(record));
+    assertEquals(true, config.topicWiseConfigs.get("b").getDeleteFlag().matches(record));
+  }
+
+  @Test
+  public void shouldLeaveDeleteFlagOffByDefault() {
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertNull(config.deleteFlag);
+  }
+
+  void assertRejectedNaming(String setting) {
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+  }
+
+  @Test
+  public void shouldRejectDeleteFieldWithoutValues() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    assertRejectedNaming(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG);
+  }
+
+  @Test
+  public void shouldRejectInvalidDeleteField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    assertRejectedNaming(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG);
+  }
+
+  @Test
+  public void shouldRejectBlankPerTopicDeleteValues() {
+    settings.put("topic.a.ks.t.deletesField", "value.op");
+    settings.put("topic.a.ks.t.deletesValues", " , ");
+    assertRejectedNaming("topic.a.ks.t.deletesValues");
+  }
+
+  @Test
+  public void shouldTurnOffDeleteFlagWithBlankPerTopicField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    settings.put("topic.a.ks.t.deletesField", "  ");
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertNull(config.topicWiseConfigs.get("a").getDeleteFlag());
+  }
+
+  @Test
+  public void shouldRejectDeleteValuesWithoutAnyField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    assertRejectedNaming(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG);
+  }
+
+  @Test
+  public void shouldRejectDeleteValuesWithOnlyBlankPerTopicField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    settings.put("topic.a.ks.t.deletesField", "  ");
+    assertRejectedNaming(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG);
+  }
+
+  @Test
+  public void shouldAcceptConnectorDeleteValuesForPerTopicField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    settings.put("topic.a.ks.t.deletesField", "value.op");
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a").getDeleteFlag());
+  }
+
+  @Test
+  public void shouldRejectPerTopicDeleteValuesWithoutField() {
+    settings.put("topic.a.ks.t.deletesValues", "delete");
+    assertRejectedNaming("topic.a.ks.t.deletesValues");
+  }
+
+  @Test
+  public void shouldNameInvalidPerTopicDeleteField() {
+    settings.put("topic.a.ks.t.deletesField", "op");
+    settings.put("topic.a.ks.t.deletesValues", "delete");
+    assertRejectedNaming("topic.a.ks.t.deletesField");
+  }
+
+  @Test
+  public void shouldNamePerTopicDeleteFieldWithoutValues() {
+    settings.put("topic.a.ks.t.deletesField", "value.op");
+    assertRejectedNaming("topic.a.ks.t.deletesField");
   }
 }
