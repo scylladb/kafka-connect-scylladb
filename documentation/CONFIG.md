@@ -180,8 +180,8 @@ can be forced by using double-quotes ("myTable" is different from mytable).
 
 These configurations can be specified for multiple Kafka topics from which records are being processed. 
 Also, these topic level configurations will override the behavior of Connector level configurations such as 
-``scylladb.consistency.level``, ``scylladb.deletes.enabled``, ``scylladb.ttl``, ``scylladb.timestamp.field`` and
-``scylladb.timestamp.unit``
+``scylladb.consistency.level``, ``scylladb.deletes.enabled``, ``scylladb.deletes.field``,
+``scylladb.deletes.values``, ``scylladb.ttl``, ``scylladb.timestamp.field`` and ``scylladb.timestamp.unit``
 
 Records from `my_topic` are written to the table `my_table` in the keyspace `my_ks`:
 
@@ -231,7 +231,7 @@ the sanitized name may be another subscribed topic.
 ``topic.my_topic.my_ks.my_table.deletesEnabled``
 
   By using this property we can specify if tombstone records(records with Kafka value as null) 
-  should processed as delete request.
+  should processed as delete request. It applies to records flagged by ``scylladb.deletes.field`` too.
 
 ``topic.my_topic.my_ks.my_table.timestampField``
 
@@ -242,6 +242,15 @@ the sanitized name may be another subscribed topic.
 
   Overrides ``scylladb.timestamp.unit`` for this topic, whether the field comes from ``timestampField`` or
   ``scylladb.timestamp.field``.
+
+``topic.my_topic.my_ks.my_table.deletesField``
+
+  Overrides ``scylladb.deletes.field`` for this topic. The values are still ``scylladb.deletes.values`` unless
+  ``deletesValues`` is set for the topic too.
+
+``topic.my_topic.my_ks.my_table.deletesValues``
+
+  Overrides ``scylladb.deletes.values`` for this topic, as a comma-separated list.
 
 
 ### Write
@@ -258,12 +267,51 @@ the sanitized name may be another subscribed topic.
 ``scylladb.deletes.enabled``
 
   Flag to determine if the connector should process deletes. 
-  The Kafka records with kafka record value as null will result in deletion of ScyllaDB record 
-  with the primary key present in Kafka record key.
+  The Kafka records with kafka record value as null, or flagged by ``scylladb.deletes.field``, will result in
+  deletion of ScyllaDB record with the primary key present in Kafka record key.
 
   * Type: boolean
   * Default: true
   * Importance: high
+
+``scylladb.deletes.field``
+
+  The record field that marks a record with a value as a delete, for sources whose change streams send a delete
+  as a record with a payload rather than as a tombstone. Written like ``scylladb.timestamp.field``:
+  ``key.<field>``, ``value.<field>`` or ``header.<name>``, with nested fields separated by dots.
+  A record whose field holds one of ``scylladb.deletes.values`` deletes the row with the primary key in the record
+  key, exactly like a tombstone: it needs ``scylladb.deletes.enabled``, binds only the key, and uses the same
+  write timestamp as a write. A record whose field is missing, null or holds another value is written, and a
+  missing or null field is logged as a warning once per topic; one whose field holds anything but a string,
+  number or boolean fails.
+  When empty, only tombstones are deletes.
+
+  For example, when the change metadata of each record names the operation and its last-update time in
+  milliseconds:
+
+      scylladb.deletes.field=value.metadata.msg
+      scylladb.deletes.values=delete
+      scylladb.timestamp.field=value.metadata.lut
+      scylladb.timestamp.unit=MILLISECONDS
+
+  A delete binds only the primary key. With a topic ``mapping``, it binds the columns of the ``key.`` entries;
+  without such entries, each key field binds to the column its ``value.`` namesake maps to, or else to the column
+  of its own name. Either way, the bound columns must be exactly the primary key. Take the write timestamp from the source, as above: change streams redeliver and reorder events,
+  and only then does a stale write lose to a later delete. A delete is kept as a tombstone only for the table's
+  ``gc_grace_seconds``; a write replayed after that can bring the row back.
+
+  * Type: String
+  * Importance: Medium
+  * Default Value: ""
+
+``scylladb.deletes.values``
+
+  The values of ``scylladb.deletes.field`` that mark a delete, compared case-sensitively with the field's text
+  form, for example ``delete``, or ``true`` for a boolean flag. Required when ``scylladb.deletes.field`` is set.
+
+  * Type: List
+  * Importance: Medium
+  * Default Value: ""
 
 ``scylladb.execute.timeout.ms``
 

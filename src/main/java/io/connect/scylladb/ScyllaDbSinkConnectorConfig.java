@@ -76,11 +76,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final String timestampUnit;
   /** Write timestamp source for topics without per-topic overrides; null for the Kafka record timestamp. */
   public final WriteTimestamp writeTimestamp;
+  public final String deletesField;
+  public final List<String> deletesValues;
+  /** Marks records with a value as deletes, for topics without per-topic overrides; null when off. */
+  public final DeleteFlag deleteFlag;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled|timestampField|timestampUnit)$");
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
 
-  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {".mapping",".consistencyLevel",".ttlSeconds",".deletesEnabled",".timestampField",".timestampUnit"};
+  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {".mapping",".consistencyLevel",".ttlSeconds",".deletesEnabled",".timestampField",".timestampUnit",".deletesField",".deletesValues"};
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);
 
@@ -132,6 +136,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.timestampField = getString(TIMESTAMP_FIELD_CONFIG);
     this.timestampUnit = getString(TIMESTAMP_UNIT_CONFIG);
     this.writeTimestamp = Strings.isNullOrEmpty(timestampField) ? null : WriteTimestamp.of(timestampField, timestampUnit);
+    this.deletesField = getString(DELETES_FIELD_CONFIG);
+    this.deletesValues = getList(DELETES_VALUES_CONFIG);
+    this.deleteFlag = Strings.isNullOrEmpty(deletesField) ? null : DeleteFlag.of(deletesField, deletesValues);
 
     final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
     this.listedTopics = topics == null ? Collections.emptySet()
@@ -314,6 +321,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   private static final String TIMESTAMP_UNIT_DEFAULT = "MICROSECONDS";
   private static final String TIMESTAMP_UNIT_DOC = "Unit of the integer in scylladb.timestamp.field, one of "
           + String.join(", ", WriteTimestamp.UNITS) + ". Timestamp-typed fields ignore it.";
+
+  public static final String DELETES_FIELD_CONFIG = "scylladb.deletes.field";
+  private static final String DELETES_FIELD_DOC = "Record field that marks a record with a value as a "
+          + "delete, for sources that send deletes as records with a payload rather than as tombstones: "
+          + "'key.<field>', 'value.<field>' or 'header.<name>', with nested fields separated by dots, "
+          + "e.g. 'value.metadata.op'. A record whose field holds one of scylladb.deletes.values deletes "
+          + "its row by primary key, like a tombstone; a missing or null field means a write. "
+          + "Requires scylladb.deletes.enabled. When empty, only tombstones are deletes.";
+  public static final String DELETES_VALUES_CONFIG = "scylladb.deletes.values";
+  private static final String DELETES_VALUES_DOC = "Values of scylladb.deletes.field that mark a delete, "
+          + "compared as strings, e.g. 'delete' or 'true'. Required when scylladb.deletes.field is set.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -639,7 +657,33 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     6,
                     ConfigDef.Width.SHORT,
                     "Write timestamp unit",
-                    new ListRecommender(new ArrayList<>(WriteTimestamp.UNITS)));
+                    new ListRecommender(new ArrayList<>(WriteTimestamp.UNITS)))
+            // Deletes flagged by a field
+            .define(
+                    DELETES_FIELD_CONFIG,
+                    ConfigDef.Type.STRING,
+                    "",
+                    (name, value) -> {
+                      if (!Strings.isNullOrEmpty((String) value)) {
+                        RecordField.parse((String) value, DeleteFlag.LABEL);
+                      }
+                    },
+                    ConfigDef.Importance.MEDIUM,
+                    DELETES_FIELD_DOC,
+                    WRITE_GROUP,
+                    7,
+                    ConfigDef.Width.MEDIUM,
+                    "Delete field")
+            .define(
+                    DELETES_VALUES_CONFIG,
+                    ConfigDef.Type.LIST,
+                    "",
+                    ConfigDef.Importance.MEDIUM,
+                    DELETES_VALUES_DOC,
+                    WRITE_GROUP,
+                    8,
+                    ConfigDef.Width.MEDIUM,
+                    "Delete field values");
   }
 
   private Matcher matchTopicSetting(final String name) {

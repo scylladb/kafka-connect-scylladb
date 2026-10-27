@@ -3,6 +3,7 @@ package io.connect.scylladb;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -37,6 +38,11 @@ public class ScyllaDbSinkTaskHelperTest {
       .field("name", Schema.STRING_SCHEMA)
       .field("time", Schema.INT32_SCHEMA)
       .build();
+  // A delete flagged in the value carries no written fields, only change metadata.
+  static final Schema FLAGGED_SCHEMA = SchemaBuilder.struct().name("flagged")
+      .field("op", Schema.STRING_SCHEMA)
+      .field("time", Schema.INT32_SCHEMA)
+      .build();
 
   Map<String, String> settings;
   ScyllaDbSession session;
@@ -69,6 +75,11 @@ public class ScyllaDbSinkTaskHelperTest {
   static SinkRecord write(String topic, long id) {
     Struct value = new Struct(VALUE_SCHEMA).put("id", id).put("name", "n").put("time", 100);
     return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), VALUE_SCHEMA, value, 1L, 1000L, null);
+  }
+
+  static SinkRecord flagged(String topic, long id, String op) {
+    Struct value = new Struct(FLAGGED_SCHEMA).put("op", op).put("time", 100);
+    return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), FLAGGED_SCHEMA, value, 3L, 1000L, null);
   }
 
   static SinkRecord tombstone(String topic, long id) {
@@ -233,5 +244,118 @@ public class ScyllaDbSinkTaskHelperTest {
     helper().getBoundStatementForRecord(write(TOPIC, 42L));
 
     verify(statement).setQueryTimestamp(42_000L);
+  }
+
+  void flagDeletes() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+  }
+
+  @Test
+  public void shouldDeleteRecordFlaggedInValue() {
+    flagDeletes();
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+
+    verify(session).delete("scylladb", "a_b_c");
+    verify(converter).convert(any(), any(), eq(ScyllaDbConstants.DELETE_OPERATION));
+    verify(session, never()).insert(anyString(), anyString(), any());
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+  }
+
+  @Test
+  public void shouldWriteRecordWithOtherFlagValue() {
+    flagDeletes();
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "write"));
+
+    verify(session).insert("scylladb", "a_b_c", null);
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldWriteRecordWithoutFlagField() {
+    flagDeletes();
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(session).insert("scylladb", "a_b_c", null);
+  }
+
+  @Test(expected = DataException.class)
+  public void shouldFailFlaggedDeleteWhenDeletesAreDisabled() {
+    flagDeletes();
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "false");
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+  }
+
+  @Test
+  public void shouldSkipFlaggedDeleteFromMissingTable() {
+    flagDeletes();
+    when(session.tableExists("scylladb", "a_b_c")).thenReturn(false);
+
+    assertNull(helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete")));
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldTakeFlaggedDeleteTimestampFromValueField() {
+    flagDeletes();
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.time");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "SECONDS");
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+
+    verify(session).delete("scylladb", "a_b_c");
+    verify(statement).setQueryTimestamp(100_000_000L);
+  }
+
+  @Test
+  public void shouldCompleteValueMappingAfterLeadingFlaggedDelete() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, username=value.name, __ttl=value.time");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+    ScyllaDbSinkTaskHelper helper = helper();
+
+    helper.getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+    SinkRecord record = write(TOPIC, 2L);
+    helper.getBoundStatementForRecord(record);
+
+    verify(session).delete("ks1", "t1");
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(record), topicConfigs.capture());
+    assertEquals(Schema.STRING_SCHEMA,
+        topicConfigs.getValue().getTableColumnMap().get("name").getKafkaRecordField().schema());
+  }
+
+  @Test
+  public void shouldTakeLeadingFlaggedDeleteTimestampFromLegacyMapping() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, username=value.name, __timestamp=value.time");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+
+    verify(session).delete("ks1", "t1");
+    // The mapped field, in microseconds, not the Kafka record timestamp.
+    verify(statement).setQueryTimestamp(100L);
+  }
+
+  @Test
+  public void shouldNotReadMappedTtlFromFlaggedDelete() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, username=value.name, __ttl=value.time");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+    ScyllaDbSinkTaskHelper helper = helper();
+    Schema opOnly = SchemaBuilder.struct().name("op").field("op", Schema.STRING_SCHEMA).build();
+    SinkRecord delete = new SinkRecord(TOPIC, 0, KEY_SCHEMA, key(1L), opOnly,
+        new Struct(opOnly).put("op", "delete"), 3L, 1000L, null);
+
+    helper.getBoundStatementForRecord(write(TOPIC, 1L));
+    helper.getBoundStatementForRecord(delete);
+
+    verify(session).delete("ks1", "t1");
   }
 }

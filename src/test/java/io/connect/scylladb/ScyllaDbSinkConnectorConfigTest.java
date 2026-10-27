@@ -6,6 +6,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -137,4 +138,45 @@ public class ScyllaDbSinkConnectorConfigTest {
   }
 
   //TODO: Add more tests
+
+  @Test
+  public void shouldLetPerTopicDeleteSettingsOverrideConnectorOnes() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    settings.put("topic.a.ks.t.deletesValues", "d,remove");
+    settings.put("topic.b.ks.t.deletesField", "value.metadata.op");
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    Map<String, Object> value = new HashMap<>();
+    value.put("op", "remove");
+    value.put("metadata", Collections.singletonMap("op", "delete"));
+    SinkRecord record = new SinkRecord("a", 0, null, null, null, value, 0L);
+    assertEquals(false, config.deleteFlag.matches(record));
+    assertEquals(true, config.topicWiseConfigs.get("a").getDeleteFlag().matches(record));
+    assertEquals(true, config.topicWiseConfigs.get("b").getDeleteFlag().matches(record));
+  }
+
+  @Test
+  public void shouldLeaveDeleteFlagOffByDefault() {
+    config = new ScyllaDbSinkConnectorConfig(settings);
+    assertNull(config.deleteFlag);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectDeleteFieldWithoutValues() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectInvalidDeleteField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectPerTopicDeleteFieldWithoutValues() {
+    settings.put("topic.a.ks.t.deletesField", "value.op");
+    new ScyllaDbSinkConnectorConfig(settings);
+  }
 }

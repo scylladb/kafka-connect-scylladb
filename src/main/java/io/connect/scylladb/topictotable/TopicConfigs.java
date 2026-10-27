@@ -5,6 +5,7 @@ import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import com.datastax.oss.driver.shaded.guava.common.base.Strings;
+import io.connect.scylladb.DeleteFlag;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
 import io.connect.scylladb.WriteTimestamp;
 import org.apache.kafka.connect.data.Field;
@@ -19,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -36,6 +38,7 @@ public class TopicConfigs {
   private Integer ttl;
   private String timeStampMappedField;
   private final WriteTimestamp writeTimestamp;
+  private final DeleteFlag deleteFlag;
   private boolean deletesEnabled;
   private boolean isScyllaColumnsMapped;
 
@@ -59,6 +62,13 @@ public class TopicConfigs {
     }
     this.writeTimestamp = Strings.isNullOrEmpty(timestampField)
             ? null : WriteTimestamp.of(timestampField, timestampUnit);
+    // Likewise, a per-topic delete field or value list overrides only its own counterpart.
+    final String deletesField = configsMapForTheTopic.getOrDefault(
+            "deletesField", scyllaDbSinkConnectorConfig.deletesField);
+    final List<String> deletesValues = configsMapForTheTopic.containsKey("deletesValues")
+            ? Arrays.asList(configsMapForTheTopic.get("deletesValues").split(","))
+            : scyllaDbSinkConnectorConfig.deletesValues;
+    this.deleteFlag = Strings.isNullOrEmpty(deletesField) ? null : DeleteFlag.of(deletesField, deletesValues);
     if (configsMapForTheTopic.containsKey("mapping")) {
       this.mappingStringForTopic = configsMapForTheTopic.get("mapping");
       for (String mappedEntry : this.mappingStringForTopic.split(",")) {
@@ -102,17 +112,28 @@ public class TopicConfigs {
   }
 
   public void setTablePartitionAndColumnValues(SinkRecord record) {
-    // A tombstone has no value schema to resolve value fields against, so it maps only the key,
-    // and the first record with a value completes the mapping.
-    final boolean tombstone = record.value() == null;
+    setTablePartitionAndColumnValues(record, record.value() == null);
+  }
+
+  /**
+   * @param delete whether the record is a delete: a tombstone, or a record flagged as a delete
+   */
+  public void setTablePartitionAndColumnValues(SinkRecord record, boolean delete) {
+    // A delete binds only the key: a tombstone has no value schema to resolve value fields against,
+    // and a flagged delete's value need not carry the written fields. The first write completes
+    // the mapping.
     for (String mappedEntry : this.mappingStringForTopic.split(",")) {
       String[] columnNameMap = mappedEntry.split("=");
-      if (tombstone && !columnNameMap[1].startsWith("key.")) {
-        continue;
-      }
       String recordField = columnNameMap[1].split("\\.").length > 0
               ? columnNameMap[1].split("\\.")[1] : "";
       String scyllaColumnName = columnNameMap[0].trim();
+      if (delete && !columnNameMap[1].startsWith("key.")) {
+        // The deprecated __timestamp mapping stamps deletes too, and needs no value schema.
+        if (scyllaColumnName.equals("__timestamp") && columnNameMap[1].startsWith("value.")) {
+          timeStampMappedField = recordField;
+        }
+        continue;
+      }
       KafkaScyllaColumnMapper kafkaScyllaColumnMapper = new KafkaScyllaColumnMapper(scyllaColumnName);
       if (columnNameMap[1].startsWith("key.")) {
         if (record.keySchema() != null) {
@@ -150,7 +171,7 @@ public class TopicConfigs {
         throw new IllegalArgumentException("field name must start with 'key.', 'value.' or 'header.'.");
       }
     }
-    this.isScyllaColumnsMapped = !tombstone;
+    this.isScyllaColumnsMapped = !delete;
   }
 
   private Field getFiledForNameFromSchema(Schema schema, String name, String schemaType) {
@@ -256,6 +277,13 @@ public class TopicConfigs {
       return WriteTimestamp.legacyMapping(timeStampMappedField);
     }
     return writeTimestamp;
+  }
+
+  /**
+   * @return what marks a record with a value as a delete, or null when only tombstones are deletes.
+   */
+  public DeleteFlag getDeleteFlag() {
+    return deleteFlag;
   }
 
   public boolean isScyllaColumnsMapped() {
