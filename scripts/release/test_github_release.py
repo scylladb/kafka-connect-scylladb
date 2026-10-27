@@ -56,6 +56,8 @@ class GitHubReleaseTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, GITHUB_REPOSITORY='scylladb/kafka-connect-scylladb')
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        for name in ('RELEASE_TAG', 'RELEASE_TAG_OBJECT', 'RELEASE_COMMIT'):
+            os.environ.pop(name, None)
         self.runner = patch.object(github_release, 'command', side_effect=self.run_command)
         self.runner.start()
         self.addCleanup(self.runner.stop)
