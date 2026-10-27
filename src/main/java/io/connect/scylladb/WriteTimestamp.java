@@ -86,7 +86,7 @@ public final class WriteTimestamp {
       }
       throw new DataException(String.format(
           "Timestamp field '%s' cannot be read from a tombstone in %s: "
-              + "a tombstone has no value, so deletes need a 'key.' or 'header.' timestamp field.",
+              + "a tombstone has no value, so it needs a 'key.' or 'header.' timestamp field.",
           field, RecordField.where(record)));
     }
     final RecordField.Resolved resolved = recordField.resolve(record);

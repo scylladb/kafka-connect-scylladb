@@ -114,6 +114,29 @@ public class RecordConverterTest {
   }
 
   @Test
+  public void shouldDeleteFlaggedRecordByKeyAndValueMappingsOfACompositeKey() {
+    // 'other' reaches its column through its value.* namesake, but a flagged delete's value need not
+    // carry it: only the delete path maps a record whose value lacks the value-mapped fields.
+    Schema keySchema = SchemaBuilder.struct().name("key")
+        .field("id", Schema.INT64_SCHEMA)
+        .field("other", Schema.STRING_SCHEMA)
+        .build();
+    Schema valueSchema = SchemaBuilder.struct().name("value")
+        .field("op", Schema.STRING_SCHEMA)
+        .build();
+    Map<String, String> topicSettings = new HashMap<>();
+    topicSettings.put("mapping", "id=key.id, other=value.other");
+    TopicConfigs topicConfigs = new TopicConfigs("ks", "t", topicSettings, config);
+    Struct key = new Struct(keySchema).put("id", 1L).put("other", "o");
+    Struct value = new Struct(valueSchema).put("op", "d");
+    SinkRecord flagged = new SinkRecord("t", 0, keySchema, key, valueSchema, value, 0L);
+    topicConfigs.setTablePartitionAndColumnValues(flagged, true);
+    converter.convert(flagged, topicConfigs, ScyllaDbConstants.DELETE_OPERATION);
+    verify(converter).setInt64Field(any(), eq("id"), eq(1L));
+    verify(converter).setStringField(any(), eq("other"), eq("o"));
+  }
+
+  @Test
   public void shouldDeleteByKeyMapping() {
     delete("userid=key.id, id=value.other");
     verify(converter).setInt64Field(any(), eq("userid"), eq(1L));
