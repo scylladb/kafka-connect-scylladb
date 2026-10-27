@@ -90,26 +90,34 @@ public class ScyllaDbSinkTaskHelper {
     final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
     final String keyspace;
     final String tableName;
+    final DeleteFlag deleteFlag = topicConfigs != null
+            ? topicConfigs.getDeleteFlag() : scyllaDbSinkConnectorConfig.deleteFlag;
+    // Sources that send deletes as records with a payload flag them in a field.
+    final boolean delete = null == record.value() || deleteFlag != null && deleteFlag.matches(record);
     if (topicConfigs != null) {
       keyspace = topicConfigs.getKeyspace();
       tableName = topicConfigs.getTable();
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
-        topicConfigs.setTablePartitionAndColumnValues(record);
+        topicConfigs.setTablePartitionAndColumnValues(record, delete);
       }
-      topicConfigs.setTtlIfAvailable(record);
+      if (!delete) {
+        topicConfigs.setTtlIfAvailable(record);
+      }
     } else {
       keyspace = scyllaDbSinkConnectorConfig.keyspace;
       tableName = sanitizedTableName(record.topic());
     }
-    // Read a field before any DDL, so a record that fails here leaves the table untouched.
     final WriteTimestamp writeTimestamp = topicConfigs != null
             ? topicConfigs.getWriteTimestamp() : scyllaDbSinkConnectorConfig.writeTimestamp;
-    final Long fieldTimestamp = writeTimestamp != null ? writeTimestamp.micros(record) : null;
-    if (null == record.value()) {
+    // A write reads its field before any DDL, so a record that fails here leaves the table untouched.
+    // A delete reads it once its table is known to exist, so a delete from a missing table is skipped.
+    Long fieldTimestamp = writeTimestamp != null && !delete ? writeTimestamp.micros(record) : null;
+    if (delete) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
       if (deletionEnabled) {
         if (this.session.tableExists(keyspace, tableName)) {
+          fieldTimestamp = writeTimestamp != null ? writeTimestamp.micros(record) : null;
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(keyspace, tableName);
           final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.DELETE_OPERATION);
           if (state.parameters == 0) {
@@ -128,7 +136,7 @@ public class ScyllaDbSinkTaskHelper {
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                String.format("Record with null value or flagged as a delete found for the key '%s'. If you are trying to delete the record set "
                                 + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
                                 + "your connector configuration.",
                         record.key()));
