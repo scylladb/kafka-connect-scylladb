@@ -168,6 +168,33 @@ public class ConvenienceCodecs {
     }
   }
 
+  public static class LongToDoubleCodec extends MappingCodec<Double, Long> {
+
+    public static final LongToDoubleCodec INSTANCE = new LongToDoubleCodec();
+
+    public LongToDoubleCodec() { super(TypeCodecs.DOUBLE, GenericType.LONG); }
+
+    @Nullable
+    @Override
+    protected Long innerToOuter(@Nullable Double value) {
+      return value == null ? null : value.longValue();
+    }
+
+    @Nullable
+    @Override
+    protected Double outerToInner(@Nullable Long value) {
+      if (value == null) {
+        return null;
+      }
+      double converted = value.doubleValue();
+      // Beyond 2^53 a double skips integers; rounding one would store another value.
+      if (converted >= 0x1p63 || (long) converted != value) {
+        throw new IllegalArgumentException(String.format("Value %d cannot be stored exactly as a double", value));
+      }
+      return converted;
+    }
+  }
+
   public static class ByteToIntCodec extends MappingCodec<Integer, Byte> {
 
     public static final ByteToIntCodec INSTANCE = new ByteToIntCodec();
@@ -221,7 +248,13 @@ public class ConvenienceCodecs {
     @Nullable
     @Override
     protected Integer outerToInner(@Nullable Long value) {
-      return value == null ? null : value.intValue();
+      if (value == null) {
+        return null;
+      }
+      if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+        throw new IllegalArgumentException(String.format("Value %d is out of range for int", value));
+      }
+      return value.intValue();
     }
   }
 
@@ -367,6 +400,7 @@ public class ConvenienceCodecs {
       IntegerToDecimalCodec.INSTANCE,
       LongToDecimalCodec.INSTANCE,
       FloatToDoubleCodec.INSTANCE,
+      LongToDoubleCodec.INSTANCE,
       ByteToIntCodec.INSTANCE,
       ShortToIntCodec.INSTANCE,
       LongToIntCodec.INSTANCE,

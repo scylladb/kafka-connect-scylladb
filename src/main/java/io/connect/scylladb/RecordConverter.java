@@ -287,11 +287,11 @@ public abstract class RecordConverter<T> {
                         break;
                     case ARRAY:
                         log.trace("convertStruct() - Processing '{}' as array.", fieldName);
-                        this.setArray(result, fieldName, schema, (List)fieldValue);
+                        this.setArray(result, fieldName, field.schema(), (List)fieldValue);
                         break;
                     case MAP:
                         log.trace("convertStruct() - Processing '{}' as map.", fieldName);
-                        this.setMap(result, fieldName, schema, (Map)fieldValue);
+                        this.setMap(result, fieldName, field.schema(), (Map)fieldValue);
                         break;
                     default:
                         throw new DataException("Unsupported schema.type(): " + schema.type());

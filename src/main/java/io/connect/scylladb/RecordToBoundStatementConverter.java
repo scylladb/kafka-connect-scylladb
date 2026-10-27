@@ -1,37 +1,58 @@
 package io.connect.scylladb;
 
+import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.ProtocolVersion;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
-import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
-import com.datastax.oss.driver.api.core.CqlIdentifier;
-import com.datastax.oss.driver.api.core.data.SettableById;
 import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.datastax.oss.driver.api.core.type.DataType;
+import com.datastax.oss.driver.api.core.type.DataTypes;
 import com.datastax.oss.driver.api.core.type.ListType;
 import com.datastax.oss.driver.api.core.type.MapType;
+import com.datastax.oss.driver.api.core.type.SetType;
 import com.datastax.oss.driver.api.core.type.UserDefinedType;
+import com.datastax.oss.driver.api.core.type.codec.CodecNotFoundException;
+import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
+import com.datastax.oss.driver.api.core.type.codec.registry.CodecRegistry;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.data.Time;
+import org.apache.kafka.connect.data.Timestamp;
 import org.apache.kafka.connect.errors.DataException;
 
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.net.InetAddress;
-import java.time.Instant;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundStatementConverter.State> {
+  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final long MILLIS_PER_DAY = TimeUnit.DAYS.toMillis(1);
+  // The CQL type each Connect logical type that arrives as a java.util.Date binds to.
+  private static final Map<String, DataType> TEMPORAL_TYPES = new HashMap<>();
+
+  static {
+    TEMPORAL_TYPES.put(Timestamp.LOGICAL_NAME, DataTypes.TIMESTAMP);
+    TEMPORAL_TYPES.put(org.apache.kafka.connect.data.Date.LOGICAL_NAME, DataTypes.DATE);
+    TEMPORAL_TYPES.put(Time.LOGICAL_NAME, DataTypes.TIME);
+  }
+
   private final PreparedStatement preparedStatement;
 
   static class State {
@@ -115,7 +136,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Date value
   ) {
-    state.statement = state.statement.setLocalDate(fieldName, LocalDate.from(value.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()));
+    state.statement = state.statement.setLocalDate(fieldName, localDate(value));
     state.parameters++;
   }
 
@@ -124,8 +145,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Date value
   ) {
-    final long nanoseconds = TimeUnit.NANOSECONDS.convert(value.getTime(), TimeUnit.MILLISECONDS);
-    state.statement = state.statement.setLocalTime(fieldName, LocalTime.ofNanoOfDay(nanoseconds));
+    state.statement = state.statement.setLocalTime(fieldName, localTime(value));
 
     state.parameters++;
   }
@@ -207,7 +227,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       Schema schema,
       List value
   ) {
-    state.statement = setCqlValue(state.statement, fieldName, value);
+    state.statement = setCqlValue(state.statement, fieldName, schema, value);
     state.parameters++;
   }
 
@@ -217,66 +237,27 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       Schema schema,
       Map value
   ) {
-    state.statement = setCqlValue(state.statement, fieldName, value);
+    state.statement = setCqlValue(state.statement, fieldName, schema, value);
     state.parameters++;
   }
 
-  private BoundStatement setCqlValue(BoundStatement statement, String fieldName, Object value) {
-    ColumnDefinition definition = preparedStatement.getVariableDefinitions().get(fieldName);
-    if (definition == null) {
+  /**
+   * Binds a list or map by the column's CQL type, converting nested values to match it. Schemaless
+   * values carry no element types, so the prepared statement's metadata decides them; a schema, when
+   * there is one, also names the Connect logical type of its dates.
+   */
+  private BoundStatement setCqlValue(BoundStatement statement, String fieldName, Schema schema, Object value) {
+    ColumnDefinitions definitions = preparedStatement.getVariableDefinitions();
+    int index = definitions.firstIndexOf(fieldName);
+    if (index < 0) {
       throw new DataException(String.format("No prepared statement variable found for field '%s'", fieldName));
     }
-    return (BoundStatement)setCqlValue(statement, fieldName, value, definition.getType());
+    DataType dataType = definitions.get(index).getType();
+    CodecRegistry registry = statement.codecRegistry();
+    return statement.set(index, toCqlValue(fieldName, value, schema, dataType, registry), registry.codecFor(dataType));
   }
 
-  private SettableById setCqlValue(
-      SettableById target,
-      String fieldName,
-      Object value,
-      DataType dataType
-  ) {
-    CqlIdentifier identifier = CqlIdentifier.fromInternal(fieldName);
-    if (dataType instanceof UserDefinedType) {
-      if (!(value instanceof Map)) {
-        throw incompatibleType(fieldName, dataType, value);
-      }
-      return target.setUdtValue(identifier, toUdtValue(fieldName, (Map)value, (UserDefinedType)dataType));
-    }
-    if (dataType instanceof ListType) {
-      if (!(value instanceof List)) {
-        throw incompatibleType(fieldName, dataType, value);
-      }
-      DataType elementType = ((ListType)dataType).getElementType();
-      List<Object> converted = new ArrayList<>(((List)value).size());
-      for (Object element : (List)value) {
-        converted.add(toCqlValue(fieldName, element, elementType));
-      }
-      return target.setList(identifier, converted, javaType(elementType));
-    }
-    if (dataType instanceof MapType) {
-      if (!(value instanceof Map)) {
-        throw incompatibleType(fieldName, dataType, value);
-      }
-      MapType mapType = (MapType)dataType;
-      Map<Object, Object> converted = new LinkedHashMap<>();
-      for (Object entryObject : ((Map)value).entrySet()) {
-        Map.Entry entry = (Map.Entry)entryObject;
-        converted.put(
-            toCqlValue(fieldName, entry.getKey(), mapType.getKeyType()),
-            toCqlValue(fieldName, entry.getValue(), mapType.getValueType())
-        );
-      }
-      return target.setMap(
-          identifier,
-          converted,
-          javaType(mapType.getKeyType()),
-          javaType(mapType.getValueType())
-      );
-    }
-    return target.set(identifier, value, value.getClass());
-  }
-
-  private Object toCqlValue(String fieldName, Object value, DataType dataType) {
+  private Object toCqlValue(String fieldName, Object value, Schema schema, DataType dataType, CodecRegistry registry) {
     if (value == null) {
       return null;
     }
@@ -284,16 +265,18 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       if (!(value instanceof Map)) {
         throw incompatibleType(fieldName, dataType, value);
       }
-      return toUdtValue(fieldName, (Map)value, (UserDefinedType)dataType);
+      return toUdtValue(fieldName, (Map<?, ?>) value, valueSchema(schema), (UserDefinedType) dataType, registry);
     }
-    if (dataType instanceof ListType) {
+    if (dataType instanceof ListType || dataType instanceof SetType) {
       if (!(value instanceof List)) {
         throw incompatibleType(fieldName, dataType, value);
       }
-      DataType elementType = ((ListType)dataType).getElementType();
-      List<Object> converted = new ArrayList<>(((List)value).size());
-      for (Object element : (List)value) {
-        converted.add(toCqlValue(fieldName, element, elementType));
+      DataType elementType = dataType instanceof ListType
+          ? ((ListType) dataType).getElementType()
+          : ((SetType) dataType).getElementType();
+      Collection<Object> converted = dataType instanceof ListType ? new ArrayList<>() : new LinkedHashSet<>();
+      for (Object element : (List<?>) value) {
+        converted.add(toCqlElement(fieldName, element, valueSchema(schema), elementType, registry));
       }
       return converted;
     }
@@ -301,101 +284,164 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       if (!(value instanceof Map)) {
         throw incompatibleType(fieldName, dataType, value);
       }
-      MapType mapType = (MapType)dataType;
+      MapType mapType = (MapType) dataType;
       Map<Object, Object> converted = new LinkedHashMap<>();
-      for (Object entryObject : ((Map)value).entrySet()) {
-        Map.Entry entry = (Map.Entry)entryObject;
+      for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+        Object key = toCqlElement(fieldName, entry.getKey(), keySchema(schema), mapType.getKeyType(), registry);
+        if (converted.containsKey(key)) {
+          // Distinct JSON keys, such as "1" and "01" for an int key, would otherwise overwrite each other.
+          throw new DataException(String.format("Field '%s' has more than one key that converts to %s", fieldName, key));
+        }
         converted.put(
-            toCqlValue(fieldName, entry.getKey(), mapType.getKeyType()),
-            toCqlValue(fieldName, entry.getValue(), mapType.getValueType())
-        );
+            key, toCqlElement(fieldName, entry.getValue(), valueSchema(schema), mapType.getValueType(), registry));
       }
       return converted;
+    }
+    if ((value instanceof Map || value instanceof List) && dataType.equals(DataTypes.TEXT)) {
+      // Nested objects, such as geometry, are kept whole as JSON text.
+      try {
+        return JSON.writeValueAsString(value);
+      } catch (JsonProcessingException e) {
+        throw new DataException(String.format("Field '%s' cannot be written as JSON text", fieldName), e);
+      }
+    }
+    if (value instanceof Map || value instanceof List) {
+      throw incompatibleType(fieldName, dataType, value);
+    }
+    return toScalar(fieldName, value, schema, dataType, registry);
+  }
+
+  /** Converts a collection element or map key, which CQL collections cannot hold as null. */
+  private Object toCqlElement(String fieldName, Object element, Schema schema, DataType dataType, CodecRegistry registry) {
+    // Some strings also convert to null, such as "" or "NULL" for a uuid.
+    return requireElement(fieldName, toCqlValue(fieldName, requireElement(fieldName, element), schema, dataType, registry));
+  }
+
+  private static Schema keySchema(Schema schema) {
+    return schema != null && schema.type() == Schema.Type.MAP ? schema.keySchema() : null;
+  }
+
+  private static Schema valueSchema(Schema schema) {
+    return schema != null && (schema.type() == Schema.Type.ARRAY || schema.type() == Schema.Type.MAP)
+        ? schema.valueSchema()
+        : null;
+  }
+
+  /**
+   * Converts a scalar to the Java type of the column's default codec, through any registered codec
+   * that accepts it (for example a JSON integer, which arrives as a Long, into an int column).
+   */
+  private Object toScalar(String fieldName, Object value, Schema schema, DataType dataType, CodecRegistry registry) {
+    if (value instanceof byte[] && dataType.equals(DataTypes.BLOB)) {
+      // Connect BYTES values in records with a schema.
+      return ByteBuffer.wrap((byte[]) value);
+    }
+    if (value instanceof Date) {
+      // Connect Timestamp, Date and Time values in records with a schema, which names their type.
+      DataType temporalType = schema == null ? null : TEMPORAL_TYPES.get(schema.name());
+      if (temporalType != null && !temporalType.equals(dataType)) {
+        throw new DataException(String.format("Field '%s' value of logical type %s cannot be converted to CQL type %s",
+            fieldName, schema.name(), dataType));
+      }
+      try {
+        if (dataType.equals(DataTypes.TIMESTAMP)) {
+          return ((Date) value).toInstant();
+        }
+        if (dataType.equals(DataTypes.DATE)) {
+          // A Connect Date is midnight UTC, so its epoch day is its date in any JVM time zone.
+          return cqlDate(fieldName, LocalDate.ofEpochDay(Math.floorDiv(((Date) value).getTime(), MILLIS_PER_DAY)));
+        }
+        if (dataType.equals(DataTypes.TIME)) {
+          return localTime((Date) value);
+        }
+      } catch (DateTimeException e) {
+        throw cannotConvert(fieldName, dataType, e);
+      }
+    }
+    TypeCodec<Object> target = registry.codecFor(dataType);
+    if (target.accepts(value)) {
+      return value instanceof LocalDate ? cqlDate(fieldName, (LocalDate) value) : value;
+    }
+    TypeCodec<Object> source;
+    try {
+      source = registry.codecFor(dataType, value);
+    } catch (CodecNotFoundException e) {
+      throw incompatibleType(fieldName, dataType, value);
+    }
+    try {
+      return target.decode(source.encode(value, ProtocolVersion.DEFAULT), ProtocolVersion.DEFAULT);
+    } catch (IllegalArgumentException | DateTimeException | ArithmeticException e) {
+      // A timestamp past the range of epoch milliseconds overflows when encoded.
+      throw cannotConvert(fieldName, dataType, e);
+    }
+  }
+
+  // The driver writes a date as a 32-bit day count, which wraps instead of failing outside that range.
+  private static LocalDate cqlDate(String fieldName, LocalDate value) {
+    long epochDay = value.toEpochDay();
+    if (epochDay < Integer.MIN_VALUE || epochDay > Integer.MAX_VALUE) {
+      throw new DataException(
+          String.format("Field '%s' value %s is outside the range of CQL type %s", fieldName, value, DataTypes.DATE));
     }
     return value;
   }
 
-  private UdtValue toUdtValue(String fieldName, Map value, UserDefinedType userDefinedType) {
+  private static DataException cannotConvert(String fieldName, DataType dataType, Exception cause) {
+    return new DataException(
+        String.format("Field '%s' value cannot be converted to CQL type %s", fieldName, dataType), cause);
+  }
+
+  private static LocalDate localDate(Date value) {
+    return value.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+  }
+
+  private static LocalTime localTime(Date value) {
+    return LocalTime.ofNanoOfDay(TimeUnit.NANOSECONDS.convert(value.getTime(), TimeUnit.MILLISECONDS));
+  }
+
+  private static Object requireElement(String fieldName, Object element) {
+    if (element == null) {
+      throw new DataException(
+          String.format("Field '%s' contains a null element; CQL collections cannot hold null", fieldName));
+    }
+    return element;
+  }
+
+  private UdtValue toUdtValue(
+      String fieldName, Map<?, ?> value, Schema schema, UserDefinedType userDefinedType, CodecRegistry registry) {
     UdtValue udtValue = userDefinedType.newValue();
-    for (Object key : value.keySet()) {
-      if (!(key instanceof String) || !userDefinedType.contains((String)key)) {
-        throw new DataException(
-            String.format("Field '%s' contains unknown UDT field '%s' for type %s", fieldName, key, userDefinedType)
-        );
+    Set<Integer> bound = new HashSet<>();
+    for (Map.Entry<?, ?> entry : value.entrySet()) {
+      int index = -1;
+      if (entry.getKey() instanceof String) {
+        // The exact name first, so quoted fields that differ only in case, such as "Sys" and "sys", both bind.
+        index = userDefinedType.firstIndexOf(CqlIdentifier.fromInternal((String) entry.getKey()));
+        if (index < 0) {
+          index = userDefinedType.firstIndexOf((String) entry.getKey());
+        }
       }
-      Object fieldValue = value.get(key);
-      if (fieldValue == null) {
-        udtValue = udtValue.setToNull((String)key);
-      } else {
-        DataType fieldType = userDefinedType.getFieldTypes().get(userDefinedType.firstIndexOf((String)key));
-        udtValue = (UdtValue)setCqlValue(udtValue, (String)key, fieldValue, fieldType);
+      if (index < 0) {
+        throw new DataException(String.format(
+            "Field '%s' contains unknown UDT field '%s' for type %s", fieldName, entry.getKey(), userDefinedType));
+      }
+      if (!bound.add(index)) {
+        // Other keys match case-insensitively, so "system" and "SYSTEM" would otherwise overwrite each other.
+        throw new DataException(String.format("Field '%s' has more than one key for UDT field '%s'",
+            fieldName, userDefinedType.getFieldNames().get(index).asInternal()));
+      }
+      DataType fieldType = userDefinedType.getFieldTypes().get(index);
+      // Errors inside the UDT name its field, as in "systems_sids.sid".
+      String udtFieldName = fieldName + "." + entry.getKey();
+      Object fieldValue = toCqlValue(udtFieldName, entry.getValue(), schema, fieldType, registry);
+      try {
+        udtValue = udtValue.set(index, fieldValue, registry.codecFor(fieldType));
+      } catch (IllegalArgumentException | ArithmeticException e) {
+        // The codec encodes on set, and can still reject the value, such as non-ASCII text in an ascii field
+        // or a timestamp past the range of epoch milliseconds.
+        throw cannotConvert(udtFieldName, fieldType, e);
       }
     }
     return udtValue;
-  }
-
-  private Class javaType(DataType dataType) {
-    if (dataType instanceof UserDefinedType) {
-      return UdtValue.class;
-    }
-    if (dataType instanceof ListType) {
-      return List.class;
-    }
-    if (dataType instanceof MapType) {
-      return Map.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.ASCII)
-        || dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.TEXT)) {
-      return String.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.BOOLEAN)) {
-      return Boolean.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.TINYINT)) {
-      return Byte.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.SMALLINT)) {
-      return Short.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.INT)) {
-      return Integer.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.BIGINT)
-        || dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.COUNTER)) {
-      return Long.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.FLOAT)) {
-      return Float.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.DOUBLE)) {
-      return Double.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.DECIMAL)) {
-      return BigDecimal.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.VARINT)) {
-      return BigInteger.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.BLOB)) {
-      return ByteBuffer.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.TIMESTAMP)) {
-      return Instant.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.DATE)) {
-      return LocalDate.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.TIME)) {
-      return LocalTime.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.UUID)
-        || dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.TIMEUUID)) {
-      return UUID.class;
-    }
-    if (dataType.equals(com.datastax.oss.driver.api.core.type.DataTypes.INET)) {
-      return InetAddress.class;
-    }
-    return Object.class;
   }
 
   private DataException incompatibleType(String fieldName, DataType dataType, Object value) {
@@ -404,7 +450,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
             "Field '%s' expects CQL type %s but received %s",
             fieldName,
             dataType,
-            value == null ? "null" : value.getClass().getName()
+            value.getClass().getName()
         )
     );
   }

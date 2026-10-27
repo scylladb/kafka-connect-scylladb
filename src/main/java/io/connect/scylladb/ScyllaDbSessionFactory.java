@@ -38,12 +38,17 @@ public class ScyllaDbSessionFactory {
 
   static {
     // Register custom codec once at class loading time; duplicates will be logged via warning
-    CODEC_REGISTRY.register(StringUuidCodec.INSTANCE);
-    CODEC_REGISTRY.register(StringTimeUuidCodec.INSTANCE);
-    CODEC_REGISTRY.register(StringInetCodec.INSTANCE);
-    CODEC_REGISTRY.register(StringVarintCodec.INSTANCE);
-    CODEC_REGISTRY.register(StringDurationCodec.INSTANCE);
-    CODEC_REGISTRY.register(ConvenienceCodecs.ALL_INSTANCES);
+    registerCodecs(CODEC_REGISTRY);
+  }
+
+  // Visible for testing
+  static void registerCodecs(MutableCodecRegistry registry) {
+    registry.register(StringUuidCodec.INSTANCE);
+    registry.register(StringTimeUuidCodec.INSTANCE);
+    registry.register(StringInetCodec.INSTANCE);
+    registry.register(StringVarintCodec.INSTANCE);
+    registry.register(StringDurationCodec.INSTANCE);
+    registry.register(ConvenienceCodecs.ALL_INSTANCES);
   }
 
   public ScyllaDbSession newSession(ScyllaDbSinkConnectorConfig config) {

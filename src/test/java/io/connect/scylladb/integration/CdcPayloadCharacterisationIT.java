@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -255,11 +256,12 @@ public class CdcPayloadCharacterisationIT {
   }
 
   @Test
-  public void schemalessListFailsToBind() {
-    // Schemaless lists are bound with element type Object, for which no codec exists (#30, #101).
-    // #287 converts them by column type.
-    assertCodecNotFound(putFlattened("09-collection-element-ops"), "tags");
-    assertCodecNotFound(putFlattened("11-geojson"), "loc_coordinates");
+  public void schemalessListIsBoundByColumnType() {
+    // #287 converts schemaless lists by column type; before it they found no codec (#30, #101).
+    assertNull(putFlattened("09-collection-element-ops"));
+    assertEquals(Arrays.asList("a", "b", "c"), row("c09").getList("tags", String.class));
+    assertNull(putFlattened("11-geojson"));
+    assertEquals(Arrays.asList(13.4, 52.5), row("c11").getList("loc_coordinates", Double.class));
   }
 
   @Test
