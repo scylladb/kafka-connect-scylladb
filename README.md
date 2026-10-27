@@ -50,7 +50,8 @@ To use this feature you have to set ``scylladb.ttl`` config with time(in seconds
 
 TTL can also be selected per record through a topic mapping. Use ``__ttl=value.field`` when the field contains a
 relative lifetime in seconds. Use ``__expiration=value.field`` when the field contains an absolute Kafka
-``Timestamp`` or Unix epoch timestamp in milliseconds. An optional
+``Timestamp`` or Unix epoch time, in the unit set by the required ``expirationUnit`` (``SECONDS`` or
+``MILLISECONDS``); ``0`` means never. Records that have already expired are skipped unless ``skipExpired=false``. An optional
 ``topic.<topic>.<keyspace>.<table>.expirationOffsetSeconds`` value is added to the absolute timestamp before the TTL
 is calculated. For example, an offset of ``86400`` expires a record one day after its expiration field.
 

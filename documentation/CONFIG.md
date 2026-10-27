@@ -213,7 +213,9 @@ the sanitized name may be another subscribed topic.
   expiration time, and write timestamp of the record using the special properties ``__ttl``, ``__expiration``,
   and ``__timestamp``.
   ``__ttl`` must reference an Integer field containing a relative lifetime in seconds.
-  ``__expiration`` must reference a Kafka Timestamp or a Long containing a Unix epoch timestamp in milliseconds.
+  ``__expiration`` must reference a Kafka Timestamp or an integer Unix epoch time in the unit set by
+  ``expirationUnit``, which it requires; an expiry of ``0``, in either form, means the record never expires. Its
+  path may step into nested structs or maps, as in ``__expiration=value.metadata.exp``.
   The connector calculates a per-record TTL from the absolute expiration time.
   A mapping cannot contain both ``__ttl`` and ``__expiration``.
   By default, the database internally tracks the write time(timestamp) of records inserted into Kafka. 
@@ -237,8 +239,18 @@ the sanitized name may be another subscribed topic.
 
   A non-negative number of seconds added to the timestamp referenced by ``__expiration`` before calculating TTL.
   For example, use ``86400`` to expire a record one day after its expiration timestamp. The default is ``0``.
-  If the resulting expiration time is not in the future, record processing follows the configured
-  ``behavior.on.error`` policy.
+
+``topic.my_topic.my_ks.my_table.expirationUnit``
+
+  The unit of an integer ``__expiration`` field: ``SECONDS`` or ``MILLISECONDS``. It has no default and is
+  required whenever the mapping contains ``__expiration``, since integers read in the wrong unit would all be
+  skipped as expired, or fail. A Kafka Timestamp field still needs the setting, which it then ignores.
+
+``topic.my_topic.my_ks.my_table.skipExpired``
+
+  What to do with a record whose expiration time, plus ``expirationOffsetSeconds``, is not in the future.
+  ``true`` (the default) skips it with a warning, leaving any earlier version of the row as it was. ``false``
+  fails it, and its processing follows the configured ``behavior.on.error`` policy.
 
 ``topic.my_topic.my_ks.my_table.deletesEnabled``
 

@@ -82,11 +82,11 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final DeleteFlag deleteFlag;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|expirationOffsetSeconds|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|expirationOffsetSeconds|expirationUnit|skipExpired|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
 
   private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {
-          ".mapping", ".consistencyLevel", ".ttlSeconds", ".expirationOffsetSeconds", ".deletesEnabled",
-          ".timestampField", ".timestampUnit", ".deletesField", ".deletesValues"
+          ".mapping", ".consistencyLevel", ".ttlSeconds", ".expirationOffsetSeconds", ".expirationUnit",
+          ".skipExpired", ".deletesEnabled", ".timestampField", ".timestampUnit", ".deletesField", ".deletesValues"
   };
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);

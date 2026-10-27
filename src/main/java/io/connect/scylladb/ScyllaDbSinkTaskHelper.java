@@ -78,7 +78,8 @@ public class ScyllaDbSinkTaskHelper {
 
   /**
    * @return the statement to execute for the record, or <code>null</code> when there is nothing to
-   * execute: a delete from a table that does not exist.
+   * execute: a delete from a table that does not exist, or a record that has already expired and
+   * is to be skipped.
    */
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     BoundStatement boundStatement = null;
@@ -95,8 +96,10 @@ public class ScyllaDbSinkTaskHelper {
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
         topicConfigs.setTablePartitionAndColumnValues(record, delete);
       }
-      if (!delete) {
-        topicConfigs.setTtlIfAvailable(record);
+      if (!delete && !topicConfigs.setTtlIfAvailable(record)) {
+        log.warn("put() - record of topic '{}' (partition {}, offset {}) has already expired. Skipping it.",
+                record.topic(), record.kafkaPartition(), record.kafkaOffset());
+        return null;
       }
     } else {
       keyspace = scyllaDbSinkConnectorConfig.keyspace;
@@ -136,7 +139,7 @@ public class ScyllaDbSinkTaskHelper {
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
       if (topicConfigs != null && topicConfigs.getTtl() != null) {
-        boundStatement = boundStatement.setInt("__ttl", topicConfigs.getTtl());
+        boundStatement = boundStatement.setInt(ScyllaDbConstants.TTL_BIND_MARKER, topicConfigs.getTtl());
       }
     }
 

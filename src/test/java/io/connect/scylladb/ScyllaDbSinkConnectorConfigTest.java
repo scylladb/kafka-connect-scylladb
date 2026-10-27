@@ -145,10 +145,17 @@ public class ScyllaDbSinkConnectorConfigTest {
     settings.put(
             "topic.events.scylladb.events.expirationOffsetSeconds",
             "86400");
+    settings.put("topic.events.scylladb.events.expirationUnit", "MILLISECONDS");
 
     config = new ScyllaDbSinkConnectorConfig(settings);
 
     assertNotNull(config.topicWiseConfigs.get("events"));
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRequireExpirationUnitWithExpirationMapping() {
+    settings.put("topic.events.scylladb.events.mapping", "id=key.id, __expiration=value.validUntil");
+    new ScyllaDbSinkConnectorConfig(settings);
   }
 
   //TODO: Add more tests

@@ -17,6 +17,7 @@ import com.datastax.oss.driver.api.querybuilder.insert.RegularInsert;
 import com.datastax.oss.driver.api.querybuilder.select.Select;
 import io.connect.scylladb.ScyllaDbSchemaBuilder.ScyllaDbSchemaKey;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -43,6 +44,8 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   private final Map<ScyllaDbSchemaKey, TableMetadata.Table> tableMetadataCache;
   private final Map<ScyllaDbSchemaKey, RecordToBoundStatementConverter> deleteStatementCache;
   private final Map<ScyllaDbSchemaKey, RecordToBoundStatementConverter> insertStatementCache;
+  // Inserts that bind the TTL per record, kept apart since topics writing to one table may differ.
+  private final Map<ScyllaDbSchemaKey, RecordToBoundStatementConverter> ttlInsertStatementCache;
 
   ScyllaDbSessionImpl(ScyllaDbSinkConnectorConfig config, CqlSession session) {
     this.session = session;
@@ -51,6 +54,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     this.tableMetadataCache = new HashMap<>();
     this.deleteStatementCache = new HashMap<>();
     this.insertStatementCache = new HashMap<>();
+    this.ttlInsertStatementCache = new HashMap<>();
   }
 
   @Override
@@ -169,7 +173,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     );
   }
 
-  private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, TopicConfigs topicConfigs) {
+  private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, boolean bindTtl) {
     InsertInto insertInto = QueryBuilder.insertInto(keyspace, tableName);
     RegularInsert regularInsert = null;
     TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
@@ -182,9 +186,8 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     }
     assert regularInsert != null;
     log.debug("insert() - Preparing statement. '{}'", regularInsert.asCql());
-    if (topicConfigs != null) {
-      return (topicConfigs.getTtl() == null) ? session.prepare(regularInsert.build()) :
-              session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker("__ttl")).build());
+    if (bindTtl) {
+      return session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker(ScyllaDbConstants.TTL_BIND_MARKER)).build());
     } else {
       return (config.ttl == null) ? session.prepare(regularInsert.build()) :
               session.prepare(regularInsert.usingTtl(config.ttl).build());
@@ -193,12 +196,14 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
 
   @Override
   public RecordToBoundStatementConverter insert(String keyspace, String tableName, TopicConfigs topicConfigs) {
-    return this.insertStatementCache.computeIfAbsent(
+    // A topic with settings of its own binds its TTL, if it has one, for each record.
+    final boolean bindTtl = topicConfigs != null && topicConfigs.getTtl() != null;
+    return (bindTtl ? this.ttlInsertStatementCache : this.insertStatementCache).computeIfAbsent(
               ScyllaDbSchemaKey.of(keyspace, tableName),
               new Function<ScyllaDbSchemaKey, RecordToBoundStatementConverter>() {
                 @Override
                 public RecordToBoundStatementConverter apply(ScyllaDbSchemaKey key) {
-                  PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, topicConfigs);
+                  PreparedStatement preparedStatement = createInsertPreparedStatement(keyspace, tableName, bindTtl);
                   return new RecordToBoundStatementConverter(preparedStatement);
                 }
               }
@@ -213,7 +218,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
       OffsetAndMetadata metadata) {
     if (null == this.offsetPreparedStatement) {
       this.offsetPreparedStatement =
-              createInsertPreparedStatement(this.config.keyspace, this.config.offsetStorageTable, null);
+              createInsertPreparedStatement(this.config.keyspace, this.config.offsetStorageTable, false);
     }
     log.debug(
             "getAddOffsetsStatement() - Setting offset to {}:{}:{}",
@@ -269,5 +274,6 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     this.tableMetadataCache.remove(key);
     this.deleteStatementCache.remove(key);
     this.insertStatementCache.remove(key);
+    this.ttlInsertStatementCache.remove(key);
   }
 }
