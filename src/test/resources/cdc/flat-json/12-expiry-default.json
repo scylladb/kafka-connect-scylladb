@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c12\",\"digest\":\"XacDyNFF4RUiNAvQrIoFHrtBL8w=\"}",
+      "value": "{\"metadata\":{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c12\",\"digest\":\"XacDyNFF4RUiNAvQrIoFHrtBL8w=\",\"msg\":\"write\",\"gen\":1,\"lut\":1793047092322,\"exp\":1793047097},\"name\":\"alice\"}"
+    }
+  ]
+}

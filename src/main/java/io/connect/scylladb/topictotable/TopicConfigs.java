@@ -4,7 +4,10 @@ import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
+import com.datastax.oss.driver.shaded.guava.common.base.Strings;
+import io.connect.scylladb.DeleteFlag;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
+import io.connect.scylladb.WriteTimestamp;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -15,33 +18,67 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 public class TopicConfigs {
 
   private static final Logger log = LoggerFactory.getLogger(TopicConfigs.class);
+  private final String keyspace;
+  private final String table;
   private String mappingStringForTopic;
   private Map<String, KafkaScyllaColumnMapper> tablePartitionKeyMap;
   private Map<String, KafkaScyllaColumnMapper> tableColumnMap;
+  private final Map<String, String> valueFieldColumns = new HashMap<>();
   private ConsistencyLevel consistencyLevel = null;
   private String ttlMappedField;
   private Integer ttl;
   private String timeStampMappedField;
-  private Long timeStamp;
+  private final WriteTimestamp writeTimestamp;
+  private final DeleteFlag deleteFlag;
   private boolean deletesEnabled;
   private boolean isScyllaColumnsMapped;
 
-  public TopicConfigs(Map<String, String> configsMapForTheTopic,
+  public TopicConfigs(String keyspace, String table, Map<String, String> configsMapForTheTopic,
                       ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig) {
+    this.keyspace = keyspace;
+    this.table = table;
     this.tablePartitionKeyMap = new HashMap<>();
     this.tableColumnMap = new HashMap<>();
     this.consistencyLevel = scyllaDbSinkConnectorConfig.consistencyLevel;
     this.ttl = scyllaDbSinkConnectorConfig.ttl;
     this.deletesEnabled = scyllaDbSinkConnectorConfig.deletesEnabled;
+    // A per-topic field or unit overrides only its own connector-level counterpart.
+    final String timestampField = configsMapForTheTopic.getOrDefault(
+            "timestampField", scyllaDbSinkConnectorConfig.timestampField);
+    final String timestampUnit = configsMapForTheTopic.getOrDefault(
+            "timestampUnit", scyllaDbSinkConnectorConfig.timestampUnit);
+    if (configsMapForTheTopic.containsKey("timestampUnit")) {
+      // Checked even when no field uses it, so a typo is not silently ignored.
+      WriteTimestamp.parseUnit(timestampUnit);
+    }
+    this.writeTimestamp = Strings.isNullOrEmpty(timestampField)
+            ? null : WriteTimestamp.of(timestampField, timestampUnit);
+    // Likewise, a per-topic delete field or value list overrides only its own counterpart.
+    final String deletesField = configsMapForTheTopic.getOrDefault(
+            "deletesField", scyllaDbSinkConnectorConfig.deletesField);
+    final List<String> deletesValues = configsMapForTheTopic.containsKey("deletesValues")
+            ? Arrays.asList(configsMapForTheTopic.get("deletesValues").split(","))
+            : scyllaDbSinkConnectorConfig.deletesValues;
+    this.deleteFlag = Strings.isNullOrEmpty(deletesField) ? null : DeleteFlag.of(deletesField, deletesValues);
     if (configsMapForTheTopic.containsKey("mapping")) {
       this.mappingStringForTopic = configsMapForTheTopic.get("mapping");
+      for (String mappedEntry : this.mappingStringForTopic.split(",")) {
+        String[] columnNameMap = mappedEntry.split("=");
+        String column = columnNameMap[0].trim();
+        if (columnNameMap.length == 2 && columnNameMap[1].startsWith("value.")
+            && !column.equals("__ttl") && !column.equals("__timestamp")) {
+          this.valueFieldColumns.put(columnNameMap[1].substring("value.".length()), column);
+        }
+      }
     }
     if (configsMapForTheTopic.containsKey("deletesEnabled")) {
       String deleteEnabledValue = configsMapForTheTopic.get("deletesEnabled");
@@ -75,11 +112,28 @@ public class TopicConfigs {
   }
 
   public void setTablePartitionAndColumnValues(SinkRecord record) {
+    setTablePartitionAndColumnValues(record, record.value() == null);
+  }
+
+  /**
+   * @param delete whether the record is a delete: a tombstone, or a record flagged as a delete
+   */
+  public void setTablePartitionAndColumnValues(SinkRecord record, boolean delete) {
+    // A delete binds only the key: a tombstone has no value schema to resolve value fields against,
+    // and a flagged delete's value need not carry the written fields. The first write completes
+    // the mapping.
     for (String mappedEntry : this.mappingStringForTopic.split(",")) {
       String[] columnNameMap = mappedEntry.split("=");
       String recordField = columnNameMap[1].split("\\.").length > 0
               ? columnNameMap[1].split("\\.")[1] : "";
       String scyllaColumnName = columnNameMap[0].trim();
+      if (delete && !columnNameMap[1].startsWith("key.")) {
+        // The deprecated __timestamp mapping stamps deletes too, and needs no value schema.
+        if (scyllaColumnName.equals("__timestamp") && columnNameMap[1].startsWith("value.")) {
+          timeStampMappedField = recordField;
+        }
+        continue;
+      }
       KafkaScyllaColumnMapper kafkaScyllaColumnMapper = new KafkaScyllaColumnMapper(scyllaColumnName);
       if (columnNameMap[1].startsWith("key.")) {
         if (record.keySchema() != null) {
@@ -117,7 +171,7 @@ public class TopicConfigs {
         throw new IllegalArgumentException("field name must start with 'key.', 'value.' or 'header.'.");
       }
     }
-    this.isScyllaColumnsMapped = true;
+    this.isScyllaColumnsMapped = !delete;
   }
 
   private Field getFiledForNameFromSchema(Schema schema, String name, String schemaType) {
@@ -140,20 +194,10 @@ public class TopicConfigs {
     return schemaField;
   }
 
-  public void setTtlAndTimeStampIfAvailable(SinkRecord record) {
-    // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
-    // while Scylla expects a microsecond precision: 1 ms = 1000 us.
-    this.timeStamp = record.timestamp() * 1000;
-    if (timeStampMappedField != null) {
-      Object timeStampValue = getValueOfField(record.value(), timeStampMappedField);
-      if (timeStampValue instanceof Long) {
-        this.timeStamp = (Long) timeStampValue;
-      } else {
-        throw new DataException(
-                String.format("TimeStamp should be of type Long. But record provided for %s is of type %s",
-                        timeStampMappedField, timeStampValue.getClass().getName()
-                ));
-      }
+  public void setTtlIfAvailable(SinkRecord record) {
+    // Tombstones carry no value, so value-mapped fields cannot apply to them.
+    if (record.value() == null) {
+      return;
     }
     if (ttlMappedField != null) {
       Object ttlValue = getValueOfField(record.value(), ttlMappedField);
@@ -180,8 +224,32 @@ public class TopicConfigs {
     }
   }
 
+  public String getKeyspace() {
+    return keyspace;
+  }
+
+  public String getTable() {
+    return table;
+  }
+
   public Map<String, KafkaScyllaColumnMapper> getTablePartitionKeyMap() {
     return tablePartitionKeyMap;
+  }
+
+  /**
+   * Columns a delete binds the given key fields to. Without {@code key.*} entries, a key field
+   * goes to the column its {@code value.*} namesake maps to, or else to a column of its own name.
+   */
+  public Map<String, KafkaScyllaColumnMapper> getDeleteKeyMap(Collection<String> keyFields) {
+    if (!tablePartitionKeyMap.isEmpty()) {
+      return tablePartitionKeyMap;
+    }
+    Map<String, KafkaScyllaColumnMapper> deleteKeyMap = new HashMap<>();
+    for (String keyField : keyFields) {
+      deleteKeyMap.put(keyField,
+          new KafkaScyllaColumnMapper(valueFieldColumns.getOrDefault(keyField, keyField)));
+    }
+    return deleteKeyMap;
   }
 
   public Map<String, KafkaScyllaColumnMapper> getTableColumnMap() {
@@ -200,8 +268,22 @@ public class TopicConfigs {
     return ttl;
   }
 
-  public Long getTimeStamp() {
-    return timeStamp;
+  /**
+   * @return the write timestamp source set by the timestampField settings, or by the deprecated
+   * <code>__timestamp</code> mapping; null when the Kafka record timestamp applies.
+   */
+  public WriteTimestamp getWriteTimestamp() {
+    if (writeTimestamp == null && timeStampMappedField != null) {
+      return WriteTimestamp.legacyMapping(timeStampMappedField);
+    }
+    return writeTimestamp;
+  }
+
+  /**
+   * @return what marks a record with a value as a delete, or null when only tombstones are deletes.
+   */
+  public DeleteFlag getDeleteFlag() {
+    return deleteFlag;
   }
 
   public boolean isScyllaColumnsMapped() {

@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
@@ -66,6 +67,18 @@ public abstract class RecordConverter<T> {
         Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap = null;
         Preconditions.checkNotNull(recordObject,
                 (ScyllaDbConstants.DELETE_OPERATION.equals(operationType) ? "key " : "value ") + "cannot be null.");
+        if (topicConfigs != null && topicConfigs.getMappingStringForTopic() != null
+                && ScyllaDbConstants.DELETE_OPERATION.equals(operationType)) {
+            // A delete binds only the primary key, so only the key mapping applies.
+            List<String> keyFields = new ArrayList<>();
+            if (recordObject instanceof Struct) {
+                ((Struct) recordObject).schema().fields().forEach(field -> keyFields.add(field.name()));
+            } else if (recordObject instanceof Map) {
+                ((Map<?, ?>) recordObject).keySet().forEach(key -> keyFields.add(String.valueOf(key)));
+            }
+            findRecordTypeAndConvert(result, recordObject, topicConfigs.getDeleteKeyMap(keyFields));
+            return result;
+        }
         if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
             columnDetailsMap = topicConfigs.getTableColumnMap();
             Preconditions.checkNotNull(record.key(), "key cannot be null.");

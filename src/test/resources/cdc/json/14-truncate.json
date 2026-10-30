@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"trunc\",\"O41Ggv/HmuSzgrhH+KLSyEt0pho=\",\"c14\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"trunc\",\"O41Ggv/HmuSzgrhH+KLSyEt0pho=\",\"c14\"],\"gen\":1,\"exp\":0,\"lut\":1793046913446,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"}]}"
+    }
+  ]
+}
