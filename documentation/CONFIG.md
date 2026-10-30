@@ -180,7 +180,28 @@ can be forced by using double-quotes ("myTable" is different from mytable).
 
 These configurations can be specified for multiple Kafka topics from which records are being processed. 
 Also, these topic level configurations will override the behavior of Connector level configurations such as 
-``scylladb.consistency.level``, ``scylladb.deletes.enabled`` and ``scylladb.ttl``
+``scylladb.consistency.level``, ``scylladb.deletes.enabled``, ``scylladb.ttl``, ``scylladb.timestamp.field`` and
+``scylladb.timestamp.unit``
+
+Records from `my_topic` are written to the table `my_table` in the keyspace `my_ks`:
+
+* `my_topic` is the topic name as seen in a SinkRecord, after all Single Message Transforms. It may contain
+  `.` and `-`.
+* `my_ks` and `my_table` are CQL names and cannot contain `.`. Unquoted names are case-insensitive, as in CQL,
+  and must start with a letter, so names such as `1ks` or `a-b` fail validation unless quoted. Quoted names,
+  such as `"MyKs"`, are accepted and keep their case.
+* All settings of one topic must name the same `my_ks` and `my_table`.
+* `my_ks` must already exist. The connector creates only ``scylladb.keyspace``, when
+  ``scylladb.keyspace.create.enabled`` is set, and validation fails when `my_ks` is missing.
+* Topics without these settings are written to ``scylladb.keyspace``, to a table named after the topic
+  with `.` and `-` replaced by `_`.
+
+**Note**: In earlier versions the `my_ks` and `my_table` parts were ignored: records were always written to
+``scylladb.keyspace``, to the table named after the topic. Settings for topics containing `.` or `-` were
+ignored unless written with the sanitized topic name (for example `topic.my_topic.ks.table.ttlSeconds` for
+the topic `my.topic`). That sanitized form is still accepted, with a deprecation warning,
+unless the sanitized name is itself listed in ``topics``. It is not accepted under ``topics.regex``, where
+the sanitized name may be another subscribed topic.
 
 ``topic.<my_topic>.<my_ks>.<my_table>.mapping``
 
@@ -196,6 +217,9 @@ Also, these topic level configurations will override the behavior of Connector l
   timestamp field that you want to use as a write time for the database record produced by the connector. 
   Eg. "topic.my_topic.my_ks.my_table.mapping": 
   "column1=key.field1, column2=value.field1, __ttl=value.field2, __timestamp=value.field3, column3=header.field1"
+
+  **Deprecated**: ``__timestamp`` reads only the value, in microseconds, and deletes use the Kafka record timestamp.
+  Use ``scylladb.timestamp.field`` or ``timestampField`` instead; they take precedence over ``__timestamp``.
   
 ``topic.my_topic.my_ks.my_table.consistencyLevel``
 
@@ -209,6 +233,16 @@ Also, these topic level configurations will override the behavior of Connector l
 
   By using this property we can specify if tombstone records(records with Kafka value as null) 
   should processed as delete request.
+
+``topic.my_topic.my_ks.my_table.timestampField``
+
+  Overrides ``scylladb.timestamp.field`` for this topic. The unit is still ``scylladb.timestamp.unit`` unless
+  ``timestampUnit`` is set for the topic too.
+
+``topic.my_topic.my_ks.my_table.timestampUnit``
+
+  Overrides ``scylladb.timestamp.unit`` for this topic, whether the field comes from ``timestampField`` or
+  ``scylladb.timestamp.field``.
 
 
 ### Write
@@ -257,7 +291,40 @@ Also, these topic level configurations will override the behavior of Connector l
   * Type: Boolean
   * Importance: Medium
   * Default Value: True
-  
+
+``scylladb.timestamp.field``
+
+  The record field to take the write timestamp (CQL ``USING TIMESTAMP``) from, for both writes and deletes.
+  Written as ``key.<field>``, ``value.<field>`` or ``header.<name>``; nested fields are separated by dots,
+  for example ``value.metadata.lut`` for a last-update time carried in the change metadata of the record.
+  A header name may itself contain dots: the longest name that matches a header is used.
+  A record whose field is missing or null fails, and ``behavior.on.error`` decides what happens next.
+  Tombstones have no value, so deletes need a ``key.`` or ``header.`` field.
+  When empty, the Kafka record timestamp is used. It has millisecond precision, so events for one row within the
+  same millisecond get equal timestamps and may be applied out of order, with a delete winning a tie.
+
+  ScyllaDB orders the writes to one row by their write timestamps alone; the connector sends them concurrently.
+  A timestamp from the source makes redelivered events idempotent: an older write or delete cannot override
+  a newer one. Events with equal timestamps are still resolved by ScyllaDB's tie rules (a delete wins over a
+  write), so the field orders events correctly only when it changes with every event of a row.
+  Create the table before records flow: a delete for a missing table is skipped, so a later write with an older
+  timestamp would then create the row.
+
+  * Type: String
+  * Importance: Medium
+  * Default Value: ""
+
+``scylladb.timestamp.unit``
+
+  The unit of the integer in ``scylladb.timestamp.field``. Fields of the Kafka Connect ``Timestamp`` type ignore it;
+  ``Date`` and ``Time`` fields are rejected, since they hold no point in time. A value that does not fit in
+  microseconds fails the record.
+
+  * Type: String
+  * Importance: Low
+  * Valid Values: ``SECONDS``, ``MILLISECONDS``, ``MICROSECONDS``, ``NANOSECONDS``
+  * Default Value: MICROSECONDS
+
 ### ScyllaDB
 
 ``behavior.on.error``
