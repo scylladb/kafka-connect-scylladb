@@ -1,7 +1,6 @@
 package io.connect.scylladb;
 
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
-import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.common.TopicPartition;
@@ -48,31 +47,72 @@ public class ScyllaDbSinkTaskHelper {
     }
   }
 
+  private static String sanitizedTableName(String topic) {
+    return topic.replaceAll("\\.", "_").replaceAll("-", "_");
+  }
+
+  private TopicConfigs topicConfigsFor(String topic) {
+    final Map<String, TopicConfigs> topicWiseConfigs = scyllaDbSinkConnectorConfig.topicWiseConfigs;
+    final String sanitized = sanitizedTableName(topic);
+    TopicConfigs topicConfigs = topicWiseConfigs.get(topic);
+    if (topicConfigs == null) {
+      // Before per-topic settings were matched by the raw topic name, they only took effect
+      // when written with the sanitized name, so keep accepting that form, unless the sanitized
+      // name is, or under topics.regex may be, a topic of this connector in its own right.
+      if (!scyllaDbSinkConnectorConfig.topicsByRegex
+              && !scyllaDbSinkConnectorConfig.listedTopics.contains(sanitized)) {
+        topicConfigs = topicWiseConfigs.get(sanitized);
+      } else if (scyllaDbSinkConnectorConfig.topicsByRegex && topicWiseConfigs.containsKey(sanitized)
+              && scyllaDbSinkConnectorConfig.topicSettingWarnings.add(topic)) {
+        log.warn("put() - Per-topic settings 'topic.{}.*' do not apply to topic '{}': under topics.regex they apply "
+                + "only to a topic named '{}'. Use 'topic.{}.*' for topic '{}'.", sanitized, topic, sanitized, topic, topic);
+      }
+      if (topicConfigs != null && scyllaDbSinkConnectorConfig.topicSettingWarnings.add(topic)) {
+        log.warn("put() - Per-topic settings for topic '{}' are configured as 'topic.{}.*'. This form is deprecated; "
+                + "use the topic name of the record: 'topic.{}.*'.", topic, sanitized, topic);
+      }
+    } else if (!sanitized.equals(topic) && topicWiseConfigs.containsKey(sanitized)
+            && scyllaDbSinkConnectorConfig.topicSettingWarnings.add(topic)) {
+      log.warn("put() - Topic '{}' has settings under both 'topic.{}.*' and 'topic.{}.*'. Only 'topic.{}.*' apply to it; "
+              + "the others apply only to a topic named '{}'.", topic, topic, sanitized, topic, sanitized);
+    }
+    return topicConfigs;
+  }
+
+  /**
+   * @return the statement to execute for the record, or <code>null</code> when there is nothing to
+   * execute: a delete from a table that does not exist.
+   */
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
-    final String tableName = record.topic().replaceAll("\\.", "_").replaceAll("-", "_");
     BoundStatement boundStatement = null;
-    TopicConfigs topicConfigs = null;
-    if (scyllaDbSinkConnectorConfig.topicWiseConfigs.containsKey(tableName)) {
-      topicConfigs = scyllaDbSinkConnectorConfig.topicWiseConfigs.get(tableName);
+    final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
+    final String keyspace;
+    final String tableName;
+    if (topicConfigs != null) {
+      keyspace = topicConfigs.getKeyspace();
+      tableName = topicConfigs.getTable();
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
         topicConfigs.setTablePartitionAndColumnValues(record);
       }
       topicConfigs.setTtlAndTimeStampIfAvailable(record);
+    } else {
+      keyspace = scyllaDbSinkConnectorConfig.keyspace;
+      tableName = sanitizedTableName(record.topic());
     }
     if (null == record.value()) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
       if (deletionEnabled) {
-        if (this.session.tableExists(tableName)) {
-          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION);
-          Preconditions.checkState(
-                  state.parameters > 0,
-                  "key must contain the columns in the primary key."
-          );
+        if (this.session.tableExists(keyspace, tableName)) {
+          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(keyspace, tableName);
+          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.DELETE_OPERATION);
+          if (state.parameters == 0) {
+            throw new DataException("key must contain the columns in the primary key.");
+          }
           boundStatement = state.statement;
         } else {
-          log.warn("put() - table '{}' does not exist. Skipping delete.", tableName);
+          log.warn("put() - table '{}.{}' does not exist. Skipping delete.", keyspace, tableName);
+          return null;
         }
       } else {
         throw new DataException(
@@ -82,8 +122,8 @@ public class ScyllaDbSinkTaskHelper {
                         record.key()));
       }
     } else {
-      this.session.createOrAlterTable(tableName, record, topicConfigs);
-      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
+      this.session.createOrAlterTable(keyspace, tableName, record, topicConfigs);
+      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(keyspace, tableName, topicConfigs);
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
     }

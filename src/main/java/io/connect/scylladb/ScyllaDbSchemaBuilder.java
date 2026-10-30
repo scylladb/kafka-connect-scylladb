@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -44,10 +45,9 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSchemaBuilder.class);
 
-  private static final Object DEFAULT = new Object();
-
   private final ScyllaDbSinkConnectorConfig config;
-  private final Cache<ScyllaDbSchemaKey, Object> schemaLookup;
+  // Topics whose records were checked against each table; several topics can share one table.
+  private final Cache<ScyllaDbSchemaKey, Set<String>> schemaLookup;
 
   final ScyllaDbSession session;
 
@@ -70,15 +70,15 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       actual = null;
     }
 
+    // Per-topic settings can target keyspaces other than scylladb.keyspace, so any table may be cached.
+    // Names are passed in their CQL form, as the settings spell them.
     if (null != actual) {
-      final String keyspace = actual.getKeyspace().toString();
-      if (this.config.keyspace.equalsIgnoreCase(keyspace)) {
-        ScyllaDbSchemaKey key =
-            ScyllaDbSchemaKey.of(actual.getKeyspace().toString(), actual.getName().toString());
-        log.info("onTableChanged() - {} changed. Invalidating...", key);
-        this.schemaLookup.invalidate(key);
-        this.session.onTableChanged(actual.getKeyspace().toString(), actual.getName().toString());
-      }
+      final String keyspace = actual.getKeyspace().asCql(true);
+      final String tableName = actual.getName().asCql(true);
+      ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(keyspace, tableName);
+      log.info("onTableChanged() - {} changed. Invalidating...", key);
+      this.schemaLookup.invalidate(key);
+      this.session.onTableChanged(keyspace, tableName);
     }
   }
 
@@ -155,7 +155,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
     if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
       if (topicConfigs.getTablePartitionKeyMap().keySet().size() != tableMetadata.primaryKey().size()) {
-        throw new DataException(
+        throw new TableConfigurationException(
                 String.format(
                         "Cannot alter primary key of a ScyllaDb Table. Existing primary key: '%s', "
                                 + "Primary key mapped in 'topic.my_topic.my_ks.my_table.mapping' config: '%s",
@@ -201,13 +201,13 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
      */
 
     if (!addedColumns.isEmpty()) {
-      final AlterTableStart alterTable = alterTable(this.config.keyspace, tableName);
+      final AlterTableStart alterTable = alterTable(key.keyspace, tableName);
       if (!this.config.tableManageEnabled) {
         List<String> requiredAlterStatements = addedColumns.entrySet().stream()
                 .map(e -> alterTable.addColumn(e.getKey(), e.getValue()).asCql())
                 .collect(Collectors.toList());
 
-        throw new DataException(
+        throw new TableConfigurationException(
                 String.format(
                         "Alter statement(s) needed. Missing column(s): '%s'\n%s;",
                         Joiner.on("', '").join(addedColumns.keySet()),
@@ -230,35 +230,39 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
           final AlterTableAddColumnEnd alterStatement = alterTable.addColumn(columnName, dataType);
           this.session.executeStatement(alterStatement.build());
         }
-        this.session.onTableChanged(this.config.keyspace, tableName);
+        this.session.onTableChanged(key.keyspace, tableName);
       }
     }
 
-    this.schemaLookup.put(key, DEFAULT);
+    checkedTopics(key).add(record.topic());
   }
 
-  public void build(String tableName, SinkRecord record, TopicConfigs topicConfigs) {
-    log.trace("build() - tableName = '{}'", tableName);
-    final ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(this.config.keyspace, tableName);
-    if (null != this.schemaLookup.getIfPresent(key)) {
+  public void build(String keyspace, String tableName, SinkRecord record, TopicConfigs topicConfigs) {
+    log.trace("build() - keyspace = '{}', tableName = '{}'", keyspace, tableName);
+    final ScyllaDbSchemaKey key = ScyllaDbSchemaKey.of(keyspace, tableName);
+    if (checkedTopics(key).contains(record.topic())) {
       return;
     }
     if (null == record.keySchema() || null == record.valueSchema()) {
       log.warn(
               "build() - Schemaless mode detected. Cannot generate DDL so assuming table is correct."
       );
-      this.schemaLookup.put(key, DEFAULT);
+      checkedTopics(key).add(record.topic());
       return;
     }
 
 
-    final TableMetadata.Table tableMetadata = this.session.tableMetadata(tableName);
+    final TableMetadata.Table tableMetadata = this.session.tableMetadata(keyspace, tableName);
 
     if (null != tableMetadata) {
       alter(key, tableName, record, tableMetadata, topicConfigs);
     } else {
       create(key, tableName, record, topicConfigs);
     }
+  }
+
+  private Set<String> checkedTopics(ScyllaDbSchemaKey key) {
+    return this.schemaLookup.asMap().computeIfAbsent(key, k -> ConcurrentHashMap.newKeySet());
   }
 
   void create(
@@ -318,7 +322,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       }
     }
 
-    CreateTableStart createStart = createTable(this.config.keyspace, tableName);
+    CreateTableStart createStart = createTable(key.keyspace, tableName);
     CreateTable create = null;
 
     if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
@@ -378,38 +382,46 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       else {
         createWithOptions = createWithOptions.withOption("compression", ImmutableMap.of("sstable_compression", config.tableCompressionAlgorithm));
       }
-      log.info("create() - Adding table {}.{}\n{}", this.config.keyspace, tableName, Arrays.toString(createWithOptions.getOptions().entrySet().toArray()));
+      log.info("create() - Adding table {}.{}\n{}", key.keyspace, tableName, Arrays.toString(createWithOptions.getOptions().entrySet().toArray()));
       session.executeStatement(createWithOptions.build());
     } else {
-      throw new DataException(
+      throw new TableConfigurationException(
               String.format("Create statement needed:\n%s", create)
       );
     }
-    this.schemaLookup.put(key, DEFAULT);
+    checkedTopics(key).add(record.topic());
   }
 
+  /**
+   * A table named by CQL keyspace and table names, which compare as CQL does: unquoted names are
+   * case-insensitive, so <code>KS.TBL</code> and <code>ks.tbl</code> share one key.
+   */
   static class ScyllaDbSchemaKey implements Comparable<ScyllaDbSchemaKey> {
     final String tableName;
     final String keyspace;
+    private final String keyspaceInternal;
+    private final String tableNameInternal;
 
 
     private ScyllaDbSchemaKey(String keyspace, String tableName) {
       this.tableName = tableName;
       this.keyspace = keyspace;
+      this.keyspaceInternal = CqlIdentifier.fromCql(keyspace).asInternal();
+      this.tableNameInternal = CqlIdentifier.fromCql(tableName).asInternal();
     }
 
 
     @Override
     public int compareTo(ScyllaDbSchemaKey that) {
       return ComparisonChain.start()
-          .compare(this.keyspace, that.keyspace)
-          .compare(this.tableName, that.tableName)
+          .compare(this.keyspaceInternal, that.keyspaceInternal)
+          .compare(this.tableNameInternal, that.tableNameInternal)
           .result();
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(this.keyspace, this.tableName);
+      return Objects.hash(this.keyspaceInternal, this.tableNameInternal);
     }
 
     @Override

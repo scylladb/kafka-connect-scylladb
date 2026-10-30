@@ -7,10 +7,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import com.datastax.oss.driver.api.core.ConsistencyLevel;
+import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.shaded.guava.common.base.Strings;
 import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableSet;
@@ -19,6 +22,8 @@ import io.connect.scylladb.utils.NullOrReadableFile;
 import io.connect.scylladb.utils.VisibleIfEqual;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.connect.sink.SinkTask;
 
 
 import io.confluent.kafka.connect.utils.config.ConfigUtils;
@@ -60,6 +65,14 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final Integer ttl;
   public final BehaviorOnError behaviourOnError;
   public final List<String> cipherSuites;
+  // Topics already warned about deprecated or ignored per-topic setting names, so each is logged once per task.
+  final Set<String> topicSettingWarnings = ConcurrentHashMap.newKeySet();
+  // Topics listed in the sink's 'topics' setting; empty when it subscribes with 'topics.regex'.
+  final Set<String> listedTopics;
+  // Whether the sink subscribes with 'topics.regex', so any name may be one of its topics.
+  final boolean topicsByRegex;
+  public final int maxRetries;
+  public final long retryBackoffMs;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled)$");
@@ -113,20 +126,40 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.statementTimeoutMs = getLong(EXECUTE_STATEMENT_TIMEOUT_MS_CONF);
     this.loadBalancingLocalDc = getString(LOAD_BALANCING_LOCAL_DC_CONFIG);
     this.behaviourOnError = BehaviorOnError.valueOf(getString(BEHAVIOR_ON_ERROR_CONFIG).toUpperCase());
+    this.maxRetries = getInt(MAX_RETRIES_CONFIG);
+    this.retryBackoffMs = getLong(RETRY_BACKOFF_MS_CONFIG);
 
+    final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
+    this.listedTopics = topics == null ? Collections.emptySet()
+            : Arrays.stream(topics.toString().split(",")).map(String::trim).collect(Collectors.toSet());
+    final Object topicsRegex = originals.get(SinkTask.TOPICS_REGEX_CONFIG);
+    this.topicsByRegex = topicsRegex != null && !topicsRegex.toString().trim().isEmpty();
+
+    // Keyed by the topic name exactly as it appears in SinkRecord.topic().
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
+    Map<String, String[]> topicTargets = new HashMap<>();
     for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
       final String name2 = entry.getKey();
       if (name2.startsWith("topic.") && hasTopicWiseConfigSuffix(name2)) {
-        final String topicName = this.tryMatchTopicName(name2);
+        final Matcher m = this.matchTopicSetting(name2);
+        final String topicName = m.group(1);
+        final String[] target = {cqlName(name2, m.group(2)), cqlName(name2, m.group(3))};
         log.debug("Interpreting " + name2 + " as custom TopicWiseConfig for topic " + topicName);
+        final String[] previousTarget = topicTargets.putIfAbsent(topicName, target);
+        if (previousTarget != null && !sameTarget(previousTarget, target)) {
+          throw new ConfigException(String.format(
+                  "Topic '%s' is configured with two different targets: '%s.%s' and '%s.%s'. "
+                          + "All topic.%s.<keyspace>.<table>.* settings must use the same keyspace and table.",
+                  topicName, previousTarget[0], previousTarget[1], target[0], target[1], topicName));
+        }
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
-        topicMap.put(name2.split("\\.")[name2.split("\\.").length - 1], entry.getValue());
+        topicMap.put(m.group(4), entry.getValue());
       }
     }
     topicWiseConfigs = new HashMap<>();
     for (Map.Entry<String, Map<String, String>> topicWiseConfig : topicWiseConfigsMap.entrySet()) {
-      TopicConfigs topicConfigs = new TopicConfigs(topicWiseConfig.getValue(), this);
+      final String[] target = topicTargets.get(topicWiseConfig.getKey());
+      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this);
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
   }
@@ -265,7 +298,10 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "``log``\n"
           + "Logs the error via connect-reporter when an error occurs while processing or "
           + "inserting records into ScyllaDB and continues to process next set of records, "
-          + "available in the kafka topics.";
+          + "available in the kafka topics.\n"
+          + "When the Connect worker provides an errant record reporter "
+          + "(``errors.deadletterqueue.topic.name`` or ``errors.log.enable`` is set), failed records "
+          + "are reported to it instead, ``errors.tolerance`` applies, and this setting is not used.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -275,7 +311,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String WRITE_GROUP = "Write";
 
   public static ConfigDef config() {
-    return new ConfigDef()
+    return defineRetries(new ConfigDef())
             .define(
                     CONTACT_POINTS_CONFIG,
                     ConfigDef.Type.STRING,
@@ -566,12 +602,68 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
             );
   }
 
-  private String tryMatchTopicName(final String name) {
+  public static final String MAX_RETRIES_CONFIG = "scylladb.max.retries";
+  public static final int MAX_RETRIES_DEFAULT = -1;
+  private static final String MAX_RETRIES_DOC = "The number of times a batch is retried after "
+          + "consecutive transient write failures, such as ScyllaDB being unreachable or a timeout, "
+          + "before the task fails. 0 fails the task on the first one; -1 retries without limit.";
+
+  public static final String RETRY_BACKOFF_MS_CONFIG = "scylladb.retry.backoff.ms";
+  public static final long RETRY_BACKOFF_MS_DEFAULT = 3000L;
+  private static final String RETRY_BACKOFF_MS_DOC = "The time to wait before retrying a batch after "
+          + "a transient write failure. The worker never waits past its next offset commit "
+          + "(``offset.flush.interval.ms``).";
+
+  private static ConfigDef defineRetries(ConfigDef configDef) {
+    return configDef
+            .define(
+                    MAX_RETRIES_CONFIG,
+                    ConfigDef.Type.INT,
+                    MAX_RETRIES_DEFAULT,
+                    ConfigDef.Range.atLeast(-1),
+                    ConfigDef.Importance.MEDIUM,
+                    MAX_RETRIES_DOC,
+                    WRITE_GROUP,
+                    10,
+                    ConfigDef.Width.SHORT,
+                    "Max retries")
+            .define(
+                    RETRY_BACKOFF_MS_CONFIG,
+                    ConfigDef.Type.LONG,
+                    RETRY_BACKOFF_MS_DEFAULT,
+                    ConfigDef.Range.atLeast(1),
+                    ConfigDef.Importance.LOW,
+                    RETRY_BACKOFF_MS_DOC,
+                    WRITE_GROUP,
+                    11,
+                    ConfigDef.Width.SHORT,
+                    "Retry backoff (in ms)");
+  }
+
+  private Matcher matchTopicSetting(final String name) {
     final Matcher m = ScyllaDbSinkConnectorConfig.TOPIC_KS_TABLE_SETTING_PATTERN.matcher(name);
     if (m.matches()) {
-      return m.group(1);
+      return m;
     }
     throw new IllegalArgumentException("The setting: " + name + " does not match topic.keyspace.table nor topic.codec regular expression pattern");
+  }
+
+  // Unquoted CQL names start with a letter and hold only letters, digits and '_', and are not a reserved keyword.
+  private static String cqlName(String setting, String name) {
+    try {
+      if (CqlIdentifier.fromCql(name).asInternal().isEmpty()) {
+        throw new ConfigException(setting, name, "Keyspace and table names must not be empty.");
+      }
+      return name;
+    } catch (IllegalArgumentException e) {
+      throw new ConfigException(setting, name, "Keyspace and table names must be valid CQL names. " + e.getMessage());
+    }
+  }
+
+  // Unquoted CQL names are case-insensitive, so 'ks.T1' and 'ks.t1' name the same table.
+  private static boolean sameTarget(String[] a, String[] b) {
+    return CqlIdentifier.fromCql(a[0]).equals(CqlIdentifier.fromCql(b[0]))
+            && CqlIdentifier.fromCql(a[1]).equals(CqlIdentifier.fromCql(b[1]));
   }
 
   private boolean hasTopicWiseConfigSuffix(final String name) {
