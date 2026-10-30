@@ -19,6 +19,7 @@ import com.datastax.oss.driver.shaded.guava.common.collect.ImmutableSet;
 import io.connect.scylladb.*;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.config.Config;
 import org.apache.kafka.connect.data.*;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.errors.DataException;
@@ -577,10 +578,7 @@ public class ScyllaDbSinkConnectorIT {
     verify(this.sinkTaskContext, times(1)).assignment();
   }
 
-  //TODO: Fix this test
-  //Fails due to NullPointerException inside ScyllaDbSinkTaskHelper
   @Test
-  @Disabled
   public void deleteMissingTable() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
@@ -1045,6 +1043,81 @@ public class ScyllaDbSinkConnectorIT {
     assertEquals(false, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
     verify(this.sinkTaskContext, times(0)).assignment();
+  }
+
+  @Test
+  public void perTopicSettingsForDottedTopic() {
+    final String topic = "per.topic-settings";
+    try (CqlSession session = sessionBuilder().build()) {
+      session.execute("CREATE KEYSPACE IF NOT EXISTS other_keyspace WITH replication = "
+              + "{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}");
+      session.execute("DROP TABLE IF EXISTS other_keyspace.mapped_table");
+    }
+    final Map<String, String> settings = settings();
+    final String prefix = "topic." + topic + ".other_keyspace.mapped_table.";
+    settings.put(prefix + "mapping", "userid=key.id, username=value.name");
+    settings.put(prefix + "ttlSeconds", "3600");
+    settings.put(prefix + "deletesEnabled", "true");
+    connector = new ScyllaDbSinkConnector();
+    connector.start(settings);
+    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 0)));
+    this.task.start(settings);
+
+    this.task.put(ImmutableList.of(
+            // The table does not exist yet, so this delete is skipped; the writes after it must still
+            // create the table from the full mapping.
+            SinkRecordUtil.delete(topic, struct("key", "id", Schema.Type.INT64, true, 3L)),
+            write(topic,
+                    struct("key", "id", Schema.Type.INT64, true, 1L),
+                    struct("value", "id", Schema.Type.INT64, true, 1L, "name", Schema.Type.STRING, true, "first")),
+            write(topic,
+                    struct("key", "id", Schema.Type.INT64, true, 2L),
+                    struct("value", "id", Schema.Type.INT64, true, 2L, "name", Schema.Type.STRING, true, "second"))
+    ));
+
+    List<Row> rows = selectAll("SELECT userid, username, TTL(username) FROM other_keyspace.mapped_table");
+    assertEquals(2, rows.size());
+    for (Row row : rows) {
+      assertTrue(row.getInt(2) > 0, "ttlSeconds must apply to the mapped table");
+    }
+    assertFalse(tableExists(SCYLLADB_KEYSPACE, "per_topic_settings"),
+            "rows must not land in the table derived from the topic name");
+
+    this.task.put(ImmutableList.of(
+            SinkRecordUtil.delete(topic, struct("key", "id", Schema.Type.INT64, true, 2L))
+    ));
+    rows = selectAll("SELECT username FROM other_keyspace.mapped_table");
+    assertEquals(1, rows.size());
+    assertEquals("first", rows.get(0).getString(0));
+  }
+
+  @Test
+  public void perTopicSettingsWithMissingKeyspace() {
+    final Map<String, String> settings = settings();
+    settings.put("topic.missing.no_such_keyspace.some_table.ttlSeconds", "3600");
+    connector = new ScyllaDbSinkConnector();
+    final Config result = connector.validate(settings);
+    final List<String> errors = result.configValues().stream()
+            .filter(v -> v.name().equals(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG))
+            .flatMap(v -> v.errorMessages().stream())
+            .collect(Collectors.toList());
+    assertEquals(1, errors.size(), errors.toString());
+    assertTrue(errors.get(0).contains("no_such_keyspace"), errors.get(0));
+    assertThrows(ConnectException.class, () -> connector.start(settings));
+  }
+
+  private List<Row> selectAll(String query) {
+    try (CqlSession session = sessionBuilder().build()) {
+      return session.execute(query).all();
+    }
+  }
+
+  private boolean tableExists(String keyspace, String table) {
+    try (CqlSession session = sessionBuilder().build()) {
+      return session.getMetadata().getKeyspace(keyspace)
+              .flatMap(ks -> ks.getTable(table))
+              .isPresent();
+    }
   }
 
   private void assertRow(CqlSession session, RowValidator validation) {
