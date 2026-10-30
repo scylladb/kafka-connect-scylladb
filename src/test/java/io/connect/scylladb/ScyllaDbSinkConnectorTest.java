@@ -1,5 +1,6 @@
 package io.connect.scylladb;
 
+import org.apache.kafka.common.config.ConfigValue;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -12,6 +13,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 public class ScyllaDbSinkConnectorTest {
@@ -58,6 +60,65 @@ public class ScyllaDbSinkConnectorTest {
   public void shouldStartAndStop() {
     startConnector();
     connector.stop();
+  }
+
+  @Test
+  public void shouldReportConflictingTopicTargetsAsValidationError() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id");
+    settings.put("topic.a.b-c.ks1.t2.ttlSeconds", "3600");
+    ConfigValue keyspace = connector.validate(settings).configValues().stream()
+        .filter(v -> v.name().equals(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG))
+        .findFirst().get();
+    assertTrue(keyspace.errorMessages().toString(),
+        keyspace.errorMessages().stream().anyMatch(m -> m.contains("two different targets")));
+  }
+
+  @Test
+  public void shouldCheckQuotedTopicKeyspaceDifferingOnlyInCase() {
+    settings.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, "\"ks\"");
+    settings.put("topic.t.\"KS\".t1.ttlSeconds", "3600");
+    settings.put("topic.u.KS.t1.ttlSeconds", "3600");
+    ScyllaDbSession session = mock(ScyllaDbSession.class);
+
+    List<String> errors = ScyllaDbSinkConnector.missingTopicKeyspaces(session, new ScyllaDbSinkConnectorConfig(settings));
+
+    // "KS" is a different keyspace from "ks", while unquoted KS is the same one.
+    assertEquals(errors.toString(), 1, errors.size());
+    verify(session).keyspaceExists("\"KS\"");
+    verify(session, never()).keyspaceExists("KS");
+  }
+
+  @Test
+  public void shouldCheckDefaultKeyspaceTargetWhenNotCreated() {
+    settings.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG, "false");
+    settings.put("topic.t.scylladb.t1.ttlSeconds", "3600");
+    ScyllaDbSession session = mock(ScyllaDbSession.class);
+
+    List<String> errors = ScyllaDbSinkConnector.missingTopicKeyspaces(session, new ScyllaDbSinkConnectorConfig(settings));
+
+    assertEquals(errors.toString(), 1, errors.size());
+    verify(session).keyspaceExists("scylladb");
+  }
+
+  @Test
+  public void shouldNotCheckDefaultKeyspaceTargetWhenCreated() {
+    settings.put("topic.t.scylladb.t1.ttlSeconds", "3600");
+    ScyllaDbSession session = mock(ScyllaDbSession.class);
+
+    List<String> errors = ScyllaDbSinkConnector.missingTopicKeyspaces(session, new ScyllaDbSinkConnectorConfig(settings));
+
+    assertTrue(errors.toString(), errors.isEmpty());
+    verify(session, never()).keyspaceExists("scylladb");
+  }
+
+  @Test
+  public void shouldReportInvalidTargetNameAsValidationError() {
+    settings.put("topic.t.ks1.a-b.ttlSeconds", "3600");
+    ConfigValue keyspace = connector.validate(settings).configValues().stream()
+        .filter(v -> v.name().equals(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG))
+        .findFirst().get();
+    assertTrue(keyspace.errorMessages().toString(),
+        keyspace.errorMessages().stream().anyMatch(m -> m.contains("topic.t.ks1.a-b.ttlSeconds")));
   }
 
   @Test

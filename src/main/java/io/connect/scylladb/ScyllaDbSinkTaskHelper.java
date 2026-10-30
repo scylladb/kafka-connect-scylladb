@@ -48,57 +48,109 @@ public class ScyllaDbSinkTaskHelper {
     }
   }
 
-  public BoundStatement getBoundStatementForRecord(SinkRecord record) {
-    final String tableName = record.topic().replaceAll("\\.", "_").replaceAll("-", "_");
-    BoundStatement boundStatement = null;
-    TopicConfigs topicConfigs = null;
-    if (scyllaDbSinkConnectorConfig.topicWiseConfigs.containsKey(tableName)) {
-      topicConfigs = scyllaDbSinkConnectorConfig.topicWiseConfigs.get(tableName);
-      if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
-        topicConfigs.setTablePartitionAndColumnValues(record);
+  private static String sanitizedTableName(String topic) {
+    return topic.replaceAll("\\.", "_").replaceAll("-", "_");
+  }
+
+  private TopicConfigs topicConfigsFor(String topic) {
+    final Map<String, TopicConfigs> topicWiseConfigs = scyllaDbSinkConnectorConfig.topicWiseConfigs;
+    final String sanitized = sanitizedTableName(topic);
+    TopicConfigs topicConfigs = topicWiseConfigs.get(topic);
+    if (topicConfigs == null) {
+      // Before per-topic settings were matched by the raw topic name, they only took effect
+      // when written with the sanitized name, so keep accepting that form, unless the sanitized
+      // name is, or under topics.regex may be, a topic of this connector in its own right.
+      if (!scyllaDbSinkConnectorConfig.topicsByRegex
+              && !scyllaDbSinkConnectorConfig.listedTopics.contains(sanitized)) {
+        topicConfigs = topicWiseConfigs.get(sanitized);
       }
-      topicConfigs.setTtlAndTimeStampIfAvailable(record);
+      if (topicConfigs != null && scyllaDbSinkConnectorConfig.topicSettingWarnings.add(topic)) {
+        log.warn("Per-topic settings for topic '{}' are configured as 'topic.{}.*'. This form is deprecated; "
+                + "use the topic name of the record: 'topic.{}.*'.", topic, sanitized, topic);
+      }
+    } else if (!sanitized.equals(topic) && topicWiseConfigs.containsKey(sanitized)
+            && scyllaDbSinkConnectorConfig.topicSettingWarnings.add(topic)) {
+      log.warn("Topic '{}' has settings under both 'topic.{}.*' and 'topic.{}.*'. Only 'topic.{}.*' apply to it; "
+              + "the others apply only to a topic named '{}'.", topic, topic, sanitized, topic, sanitized);
     }
-    if (null == record.value()) {
+    return topicConfigs;
+  }
+
+  /**
+   * @return the statement to execute for the record, or <code>null</code> when there is nothing to
+   * execute: a delete from a table that does not exist, or a record that has already expired and
+   * is to be skipped.
+   */
+  public BoundStatement getBoundStatementForRecord(SinkRecord record) {
+    BoundStatement boundStatement = null;
+    final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
+    final String keyspace;
+    final String tableName;
+    final DeleteFlag deleteFlag = topicConfigs != null
+            ? topicConfigs.getDeleteFlag() : scyllaDbSinkConnectorConfig.deleteFlag;
+    // Sources that send deletes as records with a payload flag them in a field.
+    final boolean delete = null == record.value() || deleteFlag != null && deleteFlag.matches(record);
+    if (topicConfigs != null) {
+      keyspace = topicConfigs.getKeyspace();
+      tableName = topicConfigs.getTable();
+      if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
+        topicConfigs.setTablePartitionAndColumnValues(record, delete);
+      }
+      if (!delete && !topicConfigs.setTtlIfAvailable(record)) {
+        log.warn("put() - record of topic '{}' (partition {}, offset {}) has already expired. Skipping it.",
+                record.topic(), record.kafkaPartition(), record.kafkaOffset());
+        return null;
+      }
+    } else {
+      keyspace = scyllaDbSinkConnectorConfig.keyspace;
+      tableName = sanitizedTableName(record.topic());
+    }
+    // Read before any DDL, so a record that fails here leaves the table untouched.
+    final WriteTimestamp writeTimestamp = topicConfigs != null
+            ? topicConfigs.getWriteTimestamp() : scyllaDbSinkConnectorConfig.writeTimestamp;
+    final long timestamp = writeTimestamp != null
+            ? writeTimestamp.micros(record) : WriteTimestamp.kafkaTimestampMicros(record);
+    if (delete) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
       if (deletionEnabled) {
-        if (this.session.tableExists(tableName)) {
-          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(tableName);
-          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, null, ScyllaDbConstants.DELETE_OPERATION);
+        if (this.session.tableExists(keyspace, tableName)) {
+          final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(keyspace, tableName);
+          final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.DELETE_OPERATION);
           Preconditions.checkState(
                   state.parameters > 0,
                   "key must contain the columns in the primary key."
           );
           boundStatement = state.statement;
         } else {
-          log.warn("put() - table '{}' does not exist. Skipping delete.", tableName);
+          log.warn("put() - table '{}.{}' does not exist. Skipping delete.", keyspace, tableName);
+          return null;
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                String.format("Record with null value or flagged as a delete found for the key '%s'. If you are trying to delete the record set "
                                 + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
                                 + "your connector configuration.",
                         record.key()));
       }
     } else {
-      this.session.createOrAlterTable(tableName, record, topicConfigs);
-      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(tableName, topicConfigs);
+      this.session.createOrAlterTable(keyspace, tableName, record, topicConfigs);
+      final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(keyspace, tableName, topicConfigs);
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
+      if (topicConfigs != null && topicConfigs.getTtl() != null) {
+        boundStatement = boundStatement.setInt(ScyllaDbConstants.TTL_BIND_MARKER, topicConfigs.getTtl());
+      }
     }
 
     if (topicConfigs != null) {
       log.trace("Topic mapped Consistency level : " + topicConfigs.getConsistencyLevel()
-              + ", Record/Topic mapped timestamp : " + topicConfigs.getTimeStamp());
+              + ", Record/Topic mapped timestamp : " + timestamp);
       boundStatement = boundStatement.setConsistencyLevel(topicConfigs.getConsistencyLevel());
-      boundStatement = boundStatement.setQueryTimestamp(topicConfigs.getTimeStamp());
     } else {
       boundStatement = boundStatement.setConsistencyLevel(this.scyllaDbSinkConnectorConfig.consistencyLevel);
-      // Timestamps in Kafka (record.timestamp()) are in millisecond precision,
-      // while Scylla expects a microsecond precision: 1 ms = 1000 us.
-      boundStatement = boundStatement.setQueryTimestamp(record.timestamp() * 1000);
     }
-    return boundStatement;
+    // The write timestamp is the only ordering between writes to one row: put() runs them concurrently.
+    return boundStatement.setQueryTimestamp(timestamp);
   }
 }
