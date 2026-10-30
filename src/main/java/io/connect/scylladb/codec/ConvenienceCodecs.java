@@ -1,5 +1,6 @@
 package io.connect.scylladb.codec;
 
+import com.datastax.oss.driver.api.core.data.ByteUtils;
 import com.datastax.oss.driver.api.core.type.codec.MappingCodec;
 import com.datastax.oss.driver.api.core.type.codec.TypeCodec;
 import com.datastax.oss.driver.api.core.type.codec.TypeCodecs;
@@ -9,9 +10,11 @@ import edu.umd.cs.findbugs.annotations.Nullable;
 import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 
@@ -168,6 +171,25 @@ public class ConvenienceCodecs {
     }
   }
 
+  public static class LongToDoubleCodec extends MappingCodec<Double, Long> {
+
+    public static final LongToDoubleCodec INSTANCE = new LongToDoubleCodec();
+
+    public LongToDoubleCodec() { super(TypeCodecs.DOUBLE, GenericType.LONG); }
+
+    @Nullable
+    @Override
+    protected Long innerToOuter(@Nullable Double value) {
+      return value == null ? null : value.longValue();
+    }
+
+    @Nullable
+    @Override
+    protected Double outerToInner(@Nullable Long value) {
+      return value == null ? null : value.doubleValue();
+    }
+  }
+
   public static class ByteToIntCodec extends MappingCodec<Integer, Byte> {
 
     public static final ByteToIntCodec INSTANCE = new ByteToIntCodec();
@@ -221,7 +243,13 @@ public class ConvenienceCodecs {
     @Nullable
     @Override
     protected Integer outerToInner(@Nullable Long value) {
-      return value == null ? null : value.intValue();
+      if (value == null) {
+        return null;
+      }
+      if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+        throw new IllegalArgumentException(String.format("Value %d is out of range for int", value));
+      }
+      return value.intValue();
     }
   }
 
@@ -358,6 +386,26 @@ public class ConvenienceCodecs {
     }
   }
 
+  /** Bytes in JSON arrive base64-encoded. */
+  public static class StringToBlobCodec extends MappingCodec<ByteBuffer, String> {
+
+    public static final StringToBlobCodec INSTANCE = new StringToBlobCodec();
+
+    public StringToBlobCodec() { super(TypeCodecs.BLOB, GenericType.STRING); }
+
+    @Nullable
+    @Override
+    protected String innerToOuter(@Nullable ByteBuffer value) {
+      return value == null ? null : Base64.getEncoder().encodeToString(ByteUtils.getArray(value));
+    }
+
+    @Nullable
+    @Override
+    protected ByteBuffer outerToInner(@Nullable String value) {
+      return value == null ? null : ByteBuffer.wrap(Base64.getDecoder().decode(value));
+    }
+  }
+
   public static final List<TypeCodec<?>> ALL_INSTANCES = new ArrayList<>(Arrays.asList(
       ByteToBigintCodec.INSTANCE,
       ShortToBigintCodec.INSTANCE,
@@ -367,6 +415,7 @@ public class ConvenienceCodecs {
       IntegerToDecimalCodec.INSTANCE,
       LongToDecimalCodec.INSTANCE,
       FloatToDoubleCodec.INSTANCE,
+      LongToDoubleCodec.INSTANCE,
       ByteToIntCodec.INSTANCE,
       ShortToIntCodec.INSTANCE,
       LongToIntCodec.INSTANCE,
@@ -376,6 +425,7 @@ public class ConvenienceCodecs {
       StringToBigintCodec.INSTANCE,
       ByteToSmallintCodec.INSTANCE,
       LongToVarintCodec.INSTANCE,
-      StringToTimestampCodec.INSTANCE
+      StringToTimestampCodec.INSTANCE,
+      StringToBlobCodec.INSTANCE
   ));
 }
