@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"users\",\"Oe2zQtAdUUXyn/wuy+WFNRbUuxM=\",\"c11\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"Oe2zQtAdUUXyn/wuy+WFNRbUuxM=\",\"c11\"],\"gen\":1,\"exp\":0,\"lut\":1793046823301,\"bins\":[{\"name\":\"loc\",\"type\":\"geojson\",\"value\":{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}}]}"
+    }
+  ]
+}

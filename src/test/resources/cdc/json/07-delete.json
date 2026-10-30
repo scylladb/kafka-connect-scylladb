@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"users\",\"7Vns1kV2ByY+RhrkvmN6gPyCLgE=\",\"c07\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"7Vns1kV2ByY+RhrkvmN6gPyCLgE=\",\"c07\"],\"gen\":1,\"exp\":0,\"lut\":1793046778873,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"},{\"name\":\"age\",\"type\":\"int\",\"value\":30}]}"
+    },
+    {
+      "key": "[\"test\",\"users\",\"7Vns1kV2ByY+RhrkvmN6gPyCLgE=\",\"c07\"]",
+      "value": "{\"msg\":\"delete\",\"key\":[\"test\",\"users\",\"7Vns1kV2ByY+RhrkvmN6gPyCLgE=\",\"c07\"],\"gen\":2,\"lut\":1793046781873}"
+    }
+  ]
+}
