@@ -182,6 +182,26 @@ These configurations can be specified for multiple Kafka topics from which recor
 Also, these topic level configurations will override the behavior of Connector level configurations such as 
 ``scylladb.consistency.level``, ``scylladb.deletes.enabled`` and ``scylladb.ttl``
 
+Records from `my_topic` are written to the table `my_table` in the keyspace `my_ks`:
+
+* `my_topic` is the topic name as seen in a SinkRecord, after all Single Message Transforms. It may contain
+  `.` and `-`.
+* `my_ks` and `my_table` are CQL names and cannot contain `.`. Unquoted names are case-insensitive, as in CQL,
+  and must start with a letter, so names such as `1ks` or `a-b` fail validation unless quoted. Quoted names,
+  such as `"MyKs"`, are accepted and keep their case.
+* All settings of one topic must name the same `my_ks` and `my_table`.
+* `my_ks` must already exist, unless it is ``scylladb.keyspace`` and ``scylladb.keyspace.create.enabled`` is
+  true: the connector creates no other keyspace, and validation fails when `my_ks` is missing.
+* Topics without these settings are written to ``scylladb.keyspace``, to a table named after the topic
+  with `.` and `-` replaced by `_`.
+
+**Note**: In earlier versions the `my_ks` and `my_table` parts were ignored: records were always written to
+``scylladb.keyspace``, to the table named after the topic. Settings for topics containing `.` or `-` were
+ignored unless written with the sanitized topic name (for example `topic.my_topic.ks.table.ttlSeconds` for
+the topic `my.topic`). That sanitized form is still accepted, with a deprecation warning,
+unless the sanitized name is itself listed in ``topics``. It is not accepted under ``topics.regex``, where
+the sanitized name may be another subscribed topic.
+
 ``topic.<my_topic>.<my_ks>.<my_table>.mapping``
 
   For mapping topic and fields from Kafka record's key, value and headers to ScyllaDB table and its columns.
@@ -196,6 +216,12 @@ Also, these topic level configurations will override the behavior of Connector l
   timestamp field that you want to use as a write time for the database record produced by the connector. 
   Eg. "topic.my_topic.my_ks.my_table.mapping": 
   "column1=key.field1, column2=value.field1, __ttl=value.field2, __timestamp=value.field3, column3=header.field1"
+
+  A tombstone deletes by the record key alone. Each key field binds to the primary key column of its ``key.``
+  entry, or else to the one its ``value.`` namesake maps to, or, when the mapping has no ``key.`` entries, to the
+  one of its own name. Each column is bound once, a ``key.`` entry first; other key fields, and ``key.`` entries
+  to columns outside the primary key, are ignored. A tombstone that leaves a primary key column of an existing
+  table unbound fails; one for a missing table is skipped first.
   
 ``topic.my_topic.my_ks.my_table.consistencyLevel``
 

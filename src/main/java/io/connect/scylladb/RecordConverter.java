@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
@@ -59,6 +61,13 @@ public abstract class RecordConverter<T> {
 
     protected abstract void setNullField(T result, String name);
 
+    /**
+     * Whether a delete can bind the column, that is, whether it is in the table's primary key.
+     */
+    protected boolean isPrimaryKeyColumn(String column) {
+        return true;
+    }
+
     public T convert(SinkRecord record, TopicConfigs topicConfigs, String operationType) {
         Object recordObject = ScyllaDbConstants.DELETE_OPERATION.equals(operationType) ?
                 record.key() : record.value();
@@ -66,6 +75,23 @@ public abstract class RecordConverter<T> {
         Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap = null;
         Preconditions.checkNotNull(recordObject,
                 (ScyllaDbConstants.DELETE_OPERATION.equals(operationType) ? "key " : "value ") + "cannot be null.");
+        if (ScyllaDbConstants.DELETE_OPERATION.equals(operationType)) {
+            // A delete binds only the primary key: the key fields, through the key.* entries, their
+            // value.* namesakes, or, without key.* entries or a mapping, their own names.
+            List<String> keyFields = new ArrayList<>();
+            if (recordObject instanceof Struct) {
+                ((Struct) recordObject).schema().fields().forEach(field -> keyFields.add(field.name()));
+            } else if (recordObject instanceof Map) {
+                // Sorted, as a map has no field order and the earlier key field wins a shared column.
+                ((Map<?, ?>) recordObject).keySet().forEach(key -> keyFields.add(String.valueOf(key)));
+                Collections.sort(keyFields);
+            }
+            findRecordTypeAndConvert(result, recordObject,
+                    topicConfigs != null && topicConfigs.getMappingStringForTopic() != null
+                            ? topicConfigs.getDeleteKeyMap(keyFields, this::isPrimaryKeyColumn)
+                            : TopicConfigs.getUnmappedDeleteKeyMap(keyFields, this::isPrimaryKeyColumn));
+            return result;
+        }
         if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
             columnDetailsMap = topicConfigs.getTableColumnMap();
             Preconditions.checkNotNull(record.key(), "key cannot be null.");

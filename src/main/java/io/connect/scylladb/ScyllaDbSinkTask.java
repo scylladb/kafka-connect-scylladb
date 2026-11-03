@@ -98,6 +98,11 @@ public class ScyllaDbSinkTask extends SinkTask {
         scyllaDbSinkTaskHelper.validateRecord(record);
 
         BoundStatement boundStatement = scyllaDbSinkTaskHelper.getBoundStatementForRecord(record);
+        if (boundStatement == null) {
+          topicOffsets.put(new TopicPartition(record.topic(), record.kafkaPartition()),
+                  new OffsetAndMetadata(record.kafkaOffset() + 1));
+          continue;
+        }
         log.trace("put() - Executing Bound Statement {} for {}:{}:{}",
                 boundStatement.getPreparedStatement().getQuery(),
                 record.topic(),
