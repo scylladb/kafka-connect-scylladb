@@ -22,7 +22,7 @@ message.
 | Format | Key | Write value | Delete value |
 |---|---|---|---|
 | `json` | array `[namespace, set, digest, userKey]` | `msg: "write"`, `key`, `gen`, `exp`, `lut` and a typed field list `bins` | `msg: "delete"`, `key`, `gen`, `lut`; no `exp` or `bins` |
-| `flat-json` | object `{namespace, set, userKey, digest}` | change metadata under `metadata` (with `msg: "write"`, `gen`, `exp`, `lut`), fields at the top level | only `metadata`, with `msg: "delete"`, `gen`, `lut` and no `exp` |
+| `flat-json` | object `{namespace, set, userKey, digest}` | change metadata under `metadata` (the key's fields again, plus `msg: "write"`, `gen`, `exp`, `lut`), fields at the top level | only `metadata`, with the key's fields, `msg: "delete"`, `gen`, `lut` and no `exp` |
 
 A delete is never a Kafka tombstone: it is a message with a value. A delete that
 leaves a tombstone in the source (cases 06 and 08) also carries `durable: true`;
