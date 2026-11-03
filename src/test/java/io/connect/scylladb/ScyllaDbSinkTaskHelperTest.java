@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_SELF;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -92,6 +93,11 @@ public class ScyllaDbSinkTaskHelperTest {
   static SinkRecord flagged(String topic, long id, String op) {
     Struct value = new Struct(FLAGGED_SCHEMA).put("op", op).put("time", 100);
     return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), FLAGGED_SCHEMA, value, 3L, 1000L, null);
+  }
+
+  static SinkRecord write(String topic, long id, int time) {
+    Struct value = new Struct(VALUE_SCHEMA).put("id", id).put("name", "n").put("time", time);
+    return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), VALUE_SCHEMA, value, 1L, 1000L, null);
   }
 
   static SinkRecord tombstone(String topic, long id) {
@@ -430,5 +436,110 @@ public class ScyllaDbSinkTaskHelperTest {
     helper.getBoundStatementForRecord(delete);
 
     verify(session).delete("ks1", "t1");
+  }
+
+  @Test
+  public void shouldDeleteRowOfRecordThatHasAlreadyExpired() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(session).delete("ks1", "t1");
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+    verify(session, never()).insert(anyString(), anyString(), any());
+    // At the record's own write timestamp, so a newer version already written survives.
+    verify(statement).setQueryTimestamp(1000L * 1000);
+  }
+
+  @Test
+  public void shouldDeleteRowOfRecordThatHasAlreadyExpiredWhenDeletesAreDisabled() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "false");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(session).delete("ks1", "t1");
+  }
+
+  @Test
+  public void shouldNameBehaviorOnExpiredWhenKeyOfExpiredRecordLacksThePrimaryKey() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=value.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    RecordToBoundStatementConverter.State empty = new RecordToBoundStatementConverter.State(statement);
+    when(converter.convert(any(), any(), anyString())).thenReturn(empty);
+
+    DataException ex = assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("behaviorOnExpired=SKIP"));
+  }
+
+  @Test
+  public void shouldNameBehaviorOnExpiredWhenKeyOfExpiredRecordLeavesPrimaryKeyColumnUnbound() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    // The prepared delete has markers for id and region; the key binds only id.
+    ColumnDefinition region = mock(ColumnDefinition.class);
+    when(region.getName()).thenReturn(CqlIdentifier.fromInternal("region"));
+    when(variables.size()).thenReturn(2);
+    when(variables.get(1)).thenReturn(region);
+    when(statement.isSet(0)).thenReturn(true);
+
+    DataException ex = assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("[region]"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("behaviorOnExpired=SKIP"));
+  }
+
+  @Test
+  public void shouldSkipRecordThatHasAlreadyExpiredForMissingTable() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    when(session.tableExists(anyString(), anyString())).thenReturn(false);
+
+    assertNull(helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+
+    verify(session, never()).delete(anyString(), anyString());
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+  }
+
+  @Test
+  public void shouldSkipRecordThatHasAlreadyExpiredWhenSetToSkip() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", "SKIP");
+
+    assertNull(helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+    verify(session, never()).insert(anyString(), anyString(), any());
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldFailRecordThatHasAlreadyExpiredWhenSetToFail() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", "FAIL");
+    ScyllaDbSinkTaskHelper helper = helper();
+
+    DataException e = assertThrows(DataException.class, () -> helper.getBoundStatementForRecord(write(TOPIC, 1L)));
+    assertTrue(e.getMessage(), e.getMessage().contains("expired"));
+  }
+
+  @Test
+  public void shouldBindTtlOfEachRecord() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    ScyllaDbSinkTaskHelper helper = helper();
+    final int expiresAt = (int) (System.currentTimeMillis() / 1000) + 3600;
+
+    helper.getBoundStatementForRecord(write(TOPIC, 1L, expiresAt));
+    // A record that never expires must not keep the TTL of the one before.
+    helper.getBoundStatementForRecord(write(TOPIC, 2L, 0));
+
+    ArgumentCaptor<Integer> ttl = ArgumentCaptor.forClass(Integer.class);
+    verify(statement, times(2)).setInt(eq(ScyllaDbConstants.TTL_BIND_MARKER), ttl.capture());
+    assertEquals(3600, ttl.getAllValues().get(0), 1);
+    assertEquals(Integer.valueOf(0), ttl.getAllValues().get(1));
   }
 }

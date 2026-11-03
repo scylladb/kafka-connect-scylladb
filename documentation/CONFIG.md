@@ -210,18 +210,34 @@ the sanitized name may be another subscribed topic.
   For example if you're using RegexRouter to change the topic name from `top1` to `top2` you would use `topic.top2.ks.table.mapping=...` property.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
+  A column, ``__ttl`` or ``__timestamp`` entry uses the whole path after ``key.``, ``value.`` or ``header.`` as one
+  name: ``col=value.a.b`` reads the top-level field named ``a.b``, and ``col=header.trace.id`` the header
+  ``trace.id``. Earlier versions ignored everything after the second dot, so ``col=value.a.b`` read the field ``a``.
+  ``__expiration`` is the exception: like ``scylladb.timestamp.field``, its path steps into nested fields.
   In the Kafka topic mapping, you can optionally specify fields that control the ttl (time-to-live), absolute
   expiration time, and write timestamp of the record using the special properties ``__ttl``, ``__expiration``,
   and ``__timestamp``.
   ``__ttl`` must reference an Integer field containing a relative lifetime in seconds.
-  ``__expiration`` must reference a Kafka Timestamp or a Long containing a Unix epoch timestamp in milliseconds.
-  The connector calculates a per-record TTL from the absolute expiration time.
-  A mapping cannot contain both ``__ttl`` and ``__expiration``.
+  ``__expiration`` must reference a Kafka Timestamp, or a Unix epoch time as an integer (or a string holding one)
+  in the unit set by ``expirationUnit``, which it requires; an expiry of ``0``, in either form, means the record
+  never expires. Its path may step into nested structs or maps, as in ``__expiration=value.metadata.exp``.
+  The connector calculates a per-record TTL from the absolute expiration time. A negative expiry, or a TTL above
+  ScyllaDB's maximum of 20 years (630720000 seconds), fails the record: it goes to the errant record reporter under
+  ``errors.tolerance``, or, without a reporter, ``behavior.on.error`` decides.
+  A mapping cannot contain both ``__ttl`` and ``__expiration``, and a topic that maps ``__expiration`` cannot also
+  set ``ttlSeconds``.
+  ``expirationUnit``, ``expirationOffsetSeconds`` and ``behaviorOnExpired`` apply only with ``__expiration``; set
+  without it, any of them fails the config.
   By default, the database internally tracks the write time(timestamp) of records inserted into Kafka. 
   However, this __timestamp feature in the mapping supports the scenario where the Kafka records have an explicit 
   timestamp field that you want to use as a write time for the database record produced by the connector. 
   Eg. "topic.my_topic.my_ks.my_table.mapping": 
+  "column1=key.field1, column2=value.field1, __ttl=value.field2, __timestamp=value.field3, column3=header.field1"
+
+  Or, with an absolute expiration time in epoch seconds:
+  "topic.my_topic.my_ks.my_table.mapping":
   "column1=key.field1, column2=value.field1, __expiration=value.validUntil, __timestamp=value.field3, column3=header.field1"
+  "topic.my_topic.my_ks.my_table.expirationUnit": "SECONDS"
 
   **Deprecated**: ``__timestamp`` reads only the value, in microseconds, and tombstones use the Kafka record timestamp.
   Use ``scylladb.timestamp.field`` or ``timestampField`` instead; they take precedence over ``__timestamp``.
@@ -244,13 +260,30 @@ the sanitized name may be another subscribed topic.
 
   A non-negative number of seconds added to the timestamp referenced by ``__expiration`` before calculating TTL.
   For example, use ``86400`` to expire a record one day after its expiration timestamp. The default is ``0``.
-  If the resulting expiration time is not in the future, record processing follows the configured
-  ``behavior.on.error`` policy.
+
+``topic.my_topic.my_ks.my_table.expirationUnit``
+
+  The unit of an integer ``__expiration`` field, or of a string holding one: ``SECONDS`` or ``MILLISECONDS``.
+  It has no default and is required whenever the mapping contains ``__expiration``, since integers read in the
+  wrong unit would all be treated as expired, and by default delete their rows, or fail as too far in the future.
+  A Kafka Timestamp field still needs the setting, which it then ignores.
+
+``topic.my_topic.my_ks.my_table.behaviorOnExpired``
+
+  What to do with a record whose expiration time, plus ``expirationOffsetSeconds``, is not in the future, as when
+  the connector lags or replays: ``DELETE``, ``SKIP`` or ``FAIL``, case-insensitive.
+  ``DELETE`` (the default) deletes the row at the record's write timestamp, as a delete for the record would, so
+  an earlier version of the row cannot outlive the record; it does so even when deletes are disabled, and skips
+  the record when the table does not exist. Like any delete, it needs a record key that holds the primary key;
+  without one the record fails, so use ``SKIP`` for such topics. ``SKIP`` skips it with a warning, leaving any
+  earlier version of the row as it was. ``FAIL`` fails it: it goes to the errant record reporter under
+  ``errors.tolerance``, or, without a reporter, ``behavior.on.error`` decides.
 
 ``topic.my_topic.my_ks.my_table.deletesEnabled``
 
   By using this property we can specify if tombstone records(records with Kafka value as null) 
   should processed as delete request. It applies to records flagged by ``scylladb.deletes.field`` too.
+  A record that has already expired deletes its row whatever this says; see ``behaviorOnExpired``.
 
 ``topic.my_topic.my_ks.my_table.timestampField``
 

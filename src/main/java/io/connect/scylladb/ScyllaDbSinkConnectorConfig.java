@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import com.datastax.oss.driver.api.core.ConsistencyLevel;
 import com.datastax.oss.driver.api.core.CqlIdentifier;
@@ -83,13 +84,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   /** Marks records with a value as deletes, for topics without per-topic overrides; null when off. */
   public final DeleteFlag deleteFlag;
 
-  private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|expirationOffsetSeconds|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
+  // Both picks and parses the topic.<topic>.<keyspace>.<table>.<suffix> settings.
+  private static final List<String> TOPIC_SETTINGS = Collections.unmodifiableList(Stream.concat(
+          Stream.of("mapping", "consistencyLevel", "ttlSeconds", "deletesEnabled", "timestampField",
+                  "timestampUnit", "deletesField", "deletesValues"),
+          RecordExpiry.SETTINGS.stream()).collect(Collectors.toList()));
 
-  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {
-          ".mapping", ".consistencyLevel", ".ttlSeconds", ".expirationOffsetSeconds", ".deletesEnabled",
-          ".timestampField", ".timestampUnit", ".deletesField", ".deletesValues"
-  };
+  private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.("
+                  + String.join("|", TOPIC_SETTINGS) + ")$");
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);
 
@@ -202,7 +205,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       if (consistencyLevelSetting != null) {
         ensureNotSerial(consistencyLevelSetting, topicWiseConfig.getValue().get("consistencyLevel"));
       }
-      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this);
+      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this,
+              topicSettingNames.get(topicWiseConfig.getKey()));
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
   }
@@ -850,10 +854,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   }
 
   private boolean hasTopicWiseConfigSuffix(final String name) {
-    for (String suffix : TOPIC_WISE_CONFIGS_VALID_SUFFIXES) {
-      if (name.endsWith(suffix)) return true;
-    }
-    return false;
+    return TOPIC_SETTINGS.stream().anyMatch(suffix -> name.endsWith("." + suffix));
   }
 
   private static String[] toStringArray(Object[] arr){
