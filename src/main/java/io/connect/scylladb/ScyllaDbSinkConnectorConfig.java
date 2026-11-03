@@ -84,11 +84,11 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final DeleteFlag deleteFlag;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|expirationOffsetSeconds|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|expirationOffsetSeconds|expirationUnit|skipExpired|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
 
   private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {
-          ".mapping", ".consistencyLevel", ".ttlSeconds", ".expirationOffsetSeconds", ".deletesEnabled",
-          ".timestampField", ".timestampUnit", ".deletesField", ".deletesValues"
+          ".mapping", ".consistencyLevel", ".ttlSeconds", ".expirationOffsetSeconds", ".expirationUnit",
+          ".skipExpired", ".deletesEnabled", ".timestampField", ".timestampUnit", ".deletesField", ".deletesValues"
   };
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);
@@ -202,7 +202,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       if (consistencyLevelSetting != null) {
         ensureNotSerial(consistencyLevelSetting, topicWiseConfig.getValue().get("consistencyLevel"));
       }
-      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this);
+      final String settingPrefix = String.format("topic.%s.%s.%s.", topicWiseConfig.getKey(), target[0], target[1]);
+      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this, settingPrefix);
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
   }

@@ -1,6 +1,7 @@
 package io.connect.scylladb.topictotable;
 
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -14,6 +15,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 public class TopicConfigsTest {
 
@@ -77,32 +81,168 @@ public class TopicConfigsTest {
     assertEquals(Integer.valueOf(42), configs.getTtl());
   }
 
-  @Test(expected = DataException.class)
-  public void shouldRejectExpiredTimestamp() {
+  @Test
+  public void shouldSkipExpiredTimestamp() {
     TopicConfigs configs = topicConfigs("__expiration=value.validUntil", "0");
     SinkRecord record = longRecord(999_999L);
 
     configs.setTablePartitionAndColumnValues(record);
-    configs.setTtlIfAvailable(record, 1_000_000L);
+    assertFalse(configs.setTtlIfAvailable(record, 1_000_000L));
   }
 
-  @Test(expected = DataException.class)
-  public void shouldRejectTtlAndExpirationInSameMapping() {
-    TopicConfigs configs = topicConfigs(
-            "__ttl=value.ttl, __expiration=value.validUntil",
-            "0");
+  @Test
+  public void shouldRejectExpiredTimestampWhenNotSkipping() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "__expiration=value.validUntil");
+    settings.put("expirationUnit", "MILLISECONDS");
+    settings.put("skipExpired", "false");
+    TopicConfigs configs = new TopicConfigs("ks", "table", settings, connectorConfig);
+    SinkRecord record = longRecord(999_999L);
+
+    configs.setTablePartitionAndColumnValues(record);
+    DataException e = assertThrows(DataException.class, () -> configs.setTtlIfAvailable(record, 1_000_000L));
+    assertTrue(e.getMessage(), e.getMessage().contains("expired"));
+  }
+
+  @Test
+  public void shouldReadExpirationInSeconds() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "__expiration=value.validUntil");
+    settings.put("expirationUnit", "SECONDS");
+    TopicConfigs configs = new TopicConfigs("ks", "table", settings, connectorConfig);
+    SinkRecord record = longRecord(1_100L);
+
+    configs.setTablePartitionAndColumnValues(record);
+    assertTrue(configs.setTtlIfAvailable(record, 1_000_000L));
+
+    assertEquals(Integer.valueOf(100), configs.getTtl());
+  }
+
+  @Test
+  public void shouldReadNestedExpirationNotInMappedColumns() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "id=key.id, name=value.name, __expiration=value.metadata.expiresAt");
+    settings.put("expirationUnit", "SECONDS");
+    TopicConfigs configs = new TopicConfigs("ks", "table", settings, connectorConfig);
+    Schema metadataSchema = SchemaBuilder.struct().field("expiresAt", Schema.INT64_SCHEMA).build();
     Schema valueSchema = SchemaBuilder.struct()
-            .field("ttl", Schema.INT32_SCHEMA)
-            .field("validUntil", Schema.INT64_SCHEMA)
+            .field("name", Schema.STRING_SCHEMA)
+            .field("metadata", metadataSchema)
             .build();
     Struct value = new Struct(valueSchema)
-            .put("ttl", 10)
-            .put("validUntil", 1_010_000L);
+            .put("name", "alice")
+            .put("metadata", new Struct(metadataSchema).put("expiresAt", 1_100L));
+    SinkRecord record = record(valueSchema, value);
 
-    configs.setTablePartitionAndColumnValues(record(valueSchema, value));
+    configs.setTablePartitionAndColumnValues(record);
+    assertTrue(configs.setTtlIfAvailable(record, 1_000_000L));
+
+    assertEquals(Integer.valueOf(100), configs.getTtl());
+    assertEquals(1, configs.getTableColumnMap().size());
   }
 
-  @Test(expected = DataException.class)
+  @Test
+  public void shouldRejectInvalidExpirationUnit() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("expirationUnit", "HOURS");
+    ConfigException e = assertThrows(ConfigException.class,
+            () -> new TopicConfigs("ks", "table", settings, connectorConfig, "topic.a.ks.table."));
+    assertTrue(e.getMessage(), e.getMessage().contains("topic.a.ks.table.expirationUnit"));
+  }
+
+  @Test
+  public void shouldRequireExpirationUnitWithExpirationField() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "__expiration=value.validUntil");
+    ConfigException e = assertThrows(ConfigException.class,
+            () -> new TopicConfigs("ks", "table", settings, connectorConfig, "topic.a.ks.table."));
+    assertTrue(e.getMessage(), e.getMessage().contains("topic.a.ks.table.expirationUnit"));
+  }
+
+  @Test
+  public void shouldNotRequireExpirationUnitWithoutExpirationField() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "id=key.id, name=value.name");
+    new TopicConfigs("ks", "table", settings, connectorConfig);
+  }
+
+  @Test
+  public void shouldRejectTtlAndExpirationInSameMapping() {
+    ConfigException e = assertThrows(ConfigException.class,
+            () -> prefixedTopicConfigs("__ttl=value.ttl, __expiration=value.validUntil"));
+    assertTrue(e.getMessage(), e.getMessage().contains("topic.a.ks.table.mapping"));
+    assertTrue(e.getMessage(), e.getMessage().contains("both __ttl and __expiration"));
+  }
+
+  @Test
+  public void shouldRejectExpirationFromKey() {
+    ConfigException e = assertThrows(ConfigException.class,
+            () -> prefixedTopicConfigs("id=key.id, __expiration=key.validUntil"));
+    assertTrue(e.getMessage(), e.getMessage().contains("topic.a.ks.table.mapping"));
+    assertTrue(e.getMessage(), e.getMessage().contains("must map a value field"));
+  }
+
+  @Test
+  public void shouldRejectMalformedExpirationPathUnderTheMappingName() {
+    for (String path : new String[] {"value.", "value.metadata..expiresAt"}) {
+      ConfigException e = assertThrows(ConfigException.class,
+              () -> prefixedTopicConfigs("id=key.id, __expiration=" + path));
+      assertTrue(e.getMessage(), e.getMessage().contains("topic.a.ks.table.mapping"));
+      assertTrue(e.getMessage(), e.getMessage().contains("must map a value field"));
+      assertFalse(e.getMessage(), e.getMessage().contains("header."));
+    }
+  }
+
+  @Test
+  public void shouldMapValueColumnByItsFullDottedName() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "id=key.id, name=value.meta.name");
+    TopicConfigs configs = new TopicConfigs("ks", "table", settings, connectorConfig);
+    Schema metaSchema = SchemaBuilder.struct().field("name", Schema.STRING_SCHEMA).build();
+    Schema valueSchema = SchemaBuilder.struct().field("meta", metaSchema).build();
+    SinkRecord record = record(valueSchema,
+            new Struct(valueSchema).put("meta", new Struct(metaSchema).put("name", "alice")));
+
+    // Not the parent field 'meta': a column mapping names one top-level field, which here does not exist.
+    DataException e = assertThrows(DataException.class, () -> configs.setTablePartitionAndColumnValues(record));
+    assertTrue(e.getMessage(), e.getMessage().contains("missing field 'meta.name'"));
+  }
+
+  @Test
+  public void shouldMapHeaderColumnByItsFullDottedName() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", "id=key.id, trace=header.trace.id");
+    TopicConfigs configs = new TopicConfigs("ks", "table", settings, connectorConfig);
+    Schema valueSchema = SchemaBuilder.struct().field("name", Schema.STRING_SCHEMA).build();
+    SinkRecord record = record(valueSchema, new Struct(valueSchema).put("name", "alice"));
+    record.headers().addString("trace", "parent").addString("trace.id", "abc");
+
+    configs.setTablePartitionAndColumnValues(record);
+
+    assertEquals(1, configs.getTableColumnMap().size());
+    assertTrue(configs.getTableColumnMap().containsKey("trace.id"));
+  }
+
+  private TopicConfigs prefixedTopicConfigs(String mapping) {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("mapping", mapping);
+    settings.put("expirationUnit", "MILLISECONDS");
+    return new TopicConfigs("ks", "table", settings, connectorConfig, "topic.a.ks.table.");
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectNegativeExpirationOffsetWithoutExpirationField() {
+    topicConfigs("id=key.id", "-1");
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectInvalidSkipExpired() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put("skipExpired", "yes");
+    new TopicConfigs("ks", "table", settings, connectorConfig);
+  }
+
+  @Test(expected = ConfigException.class)
   public void shouldRejectNegativeExpirationOffset() {
     topicConfigs("__expiration=value.validUntil", "-1");
   }
@@ -110,6 +250,7 @@ public class TopicConfigsTest {
   private TopicConfigs topicConfigs(String mapping, String offsetSeconds) {
     Map<String, String> settings = new HashMap<>();
     settings.put("mapping", mapping);
+    settings.put("expirationUnit", "MILLISECONDS");
     settings.put("expirationOffsetSeconds", offsetSeconds);
     return new TopicConfigs("ks", "table", settings, connectorConfig);
   }

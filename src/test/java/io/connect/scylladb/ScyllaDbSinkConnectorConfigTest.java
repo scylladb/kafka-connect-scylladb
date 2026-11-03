@@ -234,10 +234,43 @@ public class ScyllaDbSinkConnectorConfigTest {
     settings.put(
             "topic.events.scylladb.events.expirationOffsetSeconds",
             "86400");
+    settings.put("topic.events.scylladb.events.expirationUnit", "MILLISECONDS");
 
     config = new ScyllaDbSinkConnectorConfig(settings);
 
     assertNotNull(config.topicWiseConfigs.get("events"));
+  }
+
+  @Test
+  public void shouldRequireExpirationUnitWithExpirationMapping() {
+    settings.put("topic.events.scylladb.events.mapping", "id=key.id, __expiration=value.validUntil");
+    ConfigException e = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(e.getMessage(), e.getMessage().contains("topic.events.scylladb.events.expirationUnit"));
+  }
+
+  @Test
+  public void shouldNameInvalidPerTopicExpirationSettings() {
+    settings.put("topic.a.ks.t.expirationUnit", "HOURS");
+    ConfigException unit = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(unit.getMessage(), unit.getMessage().contains("topic.a.ks.t.expirationUnit"));
+
+    settings.remove("topic.a.ks.t.expirationUnit");
+    settings.put("topic.a.ks.t.expirationOffsetSeconds", "-1");
+    ConfigException offset = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(offset.getMessage(), offset.getMessage().contains("topic.a.ks.t.expirationOffsetSeconds"));
+
+    settings.remove("topic.a.ks.t.expirationOffsetSeconds");
+    settings.put("topic.a.ks.t.skipExpired", "yes");
+    ConfigException skip = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(skip.getMessage(), skip.getMessage().contains("topic.a.ks.t.skipExpired"));
+  }
+
+  @Test
+  public void shouldNameMappingWithBothTtlAndExpiration() {
+    settings.put("topic.events.scylladb.events.mapping", "id=key.id, __ttl=value.ttl, __expiration=value.validUntil");
+    settings.put("topic.events.scylladb.events.expirationUnit", "SECONDS");
+    ConfigException e = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(e.getMessage(), e.getMessage().contains("topic.events.scylladb.events.mapping"));
   }
 
   //TODO: Add more tests

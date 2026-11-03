@@ -98,33 +98,50 @@ public final class WriteTimestamp {
   }
 
   private long toMicros(SinkRecord record, Object value, Schema schema) {
-    if (value instanceof Date) {
-      // Connect's Date and Time logical types are java.util.Date too, but hold no point in time.
-      if (schema != null && !Timestamp.LOGICAL_NAME.equals(schema.name())) {
-        throw new DataException(String.format(
-            "Timestamp field '%s' in %s must be an integer or a %s, but is a %s.",
-            field, RecordField.where(record), Timestamp.LOGICAL_NAME, schema.name()));
-      }
+    if (isTimestamp(LABEL, field, record, value, schema)) {
       return checked(record, ((Date) value).getTime(), TimeUnit.MILLISECONDS);
     }
-    final long amount;
+    return checked(record, integer(LABEL, field, record, value), unit);
+  }
+
+  /**
+   * Whether a non-null field value is a point in time, a {@link Date} in milliseconds, rather
+   * than an integer. Shared with {@link RecordExpiry}, so both read the same types.
+   * @throws DataException when it is a Kafka Connect Date or Time, which hold no point in time
+   */
+  static boolean isTimestamp(String label, String field, SinkRecord record, Object value, Schema schema) {
+    if (!(value instanceof Date)) {
+      return false;
+    }
+    // Connect's Date and Time logical types are java.util.Date too, but hold no point in time.
+    if (schema != null && !Timestamp.LOGICAL_NAME.equals(schema.name())) {
+      throw new DataException(String.format(
+          "%s '%s' in %s must be an integer or a %s, but is a %s.",
+          label, field, RecordField.where(record), Timestamp.LOGICAL_NAME, schema.name()));
+    }
+    return true;
+  }
+
+  /**
+   * Reads a non-null field value that is not a {@link Date} as an integer, or a string holding one.
+   * @throws DataException when it is neither
+   */
+  static long integer(String label, String field, SinkRecord record, Object value) {
     if (value instanceof Long || value instanceof Integer || value instanceof Short || value instanceof Byte) {
-      amount = ((Number) value).longValue();
+      return ((Number) value).longValue();
     } else if (value instanceof BigInteger && ((BigInteger) value).bitLength() < Long.SIZE) {
-      amount = ((BigInteger) value).longValue();
+      return ((BigInteger) value).longValue();
     } else if (value instanceof String) {
       try {
-        amount = Long.parseLong(((String) value).trim());
+        return Long.parseLong(((String) value).trim());
       } catch (NumberFormatException e) {
         throw new DataException(String.format(
-            "Timestamp field '%s' in %s is not an integer: '%s'.", field, RecordField.where(record), value));
+            "%s '%s' in %s is not an integer: '%s'.", label, field, RecordField.where(record), value));
       }
-    } else {
-      throw new DataException(String.format(
-          "Timestamp field '%s' in %s must be an integer or a timestamp, but is a %s.",
-          field, RecordField.where(record), value.getClass().getName()));
     }
-    return checked(record, amount, unit);
+    throw new DataException(String.format(
+        "%s '%s' in %s must be an integer or a timestamp, but is a %s.",
+        label, field, RecordField.where(record), value.getClass().getName()));
   }
 
   private long checked(SinkRecord record, long amount, TimeUnit unit) {
