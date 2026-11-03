@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"users\",\"XacDyNFF4RUiNAvQrIoFHrtBL8w=\",\"c12\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"XacDyNFF4RUiNAvQrIoFHrtBL8w=\",\"c12\"],\"gen\":1,\"exp\":1793046836,\"lut\":1793046831409,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"}]}"
+    }
+  ]
+}

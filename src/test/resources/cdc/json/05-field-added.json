@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "key": "[\"test\",\"users\",\"EfQKl2/bfdWdCw9Kmvg61r7uvL8=\",\"c05\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"EfQKl2/bfdWdCw9Kmvg61r7uvL8=\",\"c05\"],\"gen\":1,\"exp\":0,\"lut\":1793046756653,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"}]}"
+    },
+    {
+      "key": "[\"test\",\"users\",\"EfQKl2/bfdWdCw9Kmvg61r7uvL8=\",\"c05\"]",
+      "value": "{\"msg\":\"write\",\"key\":[\"test\",\"users\",\"EfQKl2/bfdWdCw9Kmvg61r7uvL8=\",\"c05\"],\"gen\":2,\"exp\":0,\"lut\":1793046759653,\"bins\":[{\"name\":\"name\",\"type\":\"str\",\"value\":\"alice\"},{\"name\":\"city\",\"type\":\"str\",\"value\":\"paris\"}]}"
+    }
+  ]
+}

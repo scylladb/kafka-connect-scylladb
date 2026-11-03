@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "key": "{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c06\",\"digest\":\"5Hf3t9gYfgg+esxDdMkmg0w7ies=\"}",
+      "value": "{\"metadata\":{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c06\",\"digest\":\"5Hf3t9gYfgg+esxDdMkmg0w7ies=\",\"msg\":\"write\",\"gen\":1,\"lut\":1793047028677,\"exp\":0},\"name\":\"alice\",\"age\":30}"
+    },
+    {
+      "key": "{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c06\",\"digest\":\"5Hf3t9gYfgg+esxDdMkmg0w7ies=\"}",
+      "value": "{\"metadata\":{\"namespace\":\"test\",\"set\":\"users\",\"userKey\":\"c06\",\"digest\":\"5Hf3t9gYfgg+esxDdMkmg0w7ies=\",\"msg\":\"delete\",\"durable\":true,\"gen\":2,\"lut\":1793047031682}}"
+    }
+  ]
+}
