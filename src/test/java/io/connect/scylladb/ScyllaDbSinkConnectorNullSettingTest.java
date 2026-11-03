@@ -4,7 +4,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,16 +19,12 @@ public class ScyllaDbSinkConnectorNullSettingTest {
 
   @Parameterized.Parameters(name = "{0}")
   public static List<String> settings() {
-    return Arrays.asList(
-            "topic.t.ks.t1.mapping",
-            "topic.t.ks.t1.consistencyLevel",
-            "topic.t.ks.t1.ttlSeconds",
-            "topic.t.ks.t1.deletesEnabled",
-            "topic.t.ks.t1.timestampField",
-            "topic.t.ks.t1.timestampUnit",
-            "topic.t.ks.t1.deletesField",
-            "topic.t.ks.t1.deletesValues",
-            ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG);
+    // Every per-topic setting, so that one added later is covered too.
+    final List<String> settings = ScyllaDbSinkConnectorConfig.TOPIC_SETTINGS.stream()
+            .map(suffix -> "topic.t.ks.t1." + suffix)
+            .collect(Collectors.toList());
+    settings.add(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG);
+    return settings;
   }
 
   @Parameterized.Parameter
@@ -39,9 +34,11 @@ public class ScyllaDbSinkConnectorNullSettingTest {
   public void shouldReportNullSettingByName() {
     final Map<String, String> settings = new HashMap<>();
     settings.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, "ks");
-    // Valid delete settings, so that each null is the only error.
+    // Valid delete and expiry settings, so that each null is the only error.
     settings.put("topic.t.ks.t1.deletesField", "value.op");
     settings.put("topic.t.ks.t1.deletesValues", "d");
+    settings.put("topic.t.ks.t1.mapping", "id=key.id, __expiration=value.exp");
+    settings.put("topic.t.ks.t1.expirationUnit", "SECONDS");
     settings.put(setting, null);
 
     final List<String> errors = new ScyllaDbSinkConnector().validate(settings).configValues().stream()
