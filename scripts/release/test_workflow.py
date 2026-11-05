@@ -57,6 +57,17 @@ class WorkflowTests(unittest.TestCase):
             if '        run:' in step:
                 self.assertNotIn('${{ inputs.', step.split('        run:', 1)[1])
 
+    def test_github_release_follows_authoritative_publication_and_keeps_gates(self):
+        publish = self.workflow.index('python3 scripts/release/github_release.py\n')
+        self.assertLess(self.workflow.index('release:perform'), publish)
+        record = self.workflow.index('Record prepared release tag before Maven cleanup')
+        self.assertLess(self.workflow.index('release:prepare'), record)
+        self.assertLess(record, self.workflow.index('release:perform'))
+        self.assertLess(self.workflow.index('git push origin --follow-tags'), publish)
+        step = next(step for step in self.steps if step.startswith('Create GitHub Release\n'))
+        self.assertIn("if: inputs.dry-run == false && inputs.target-tag == 'master'", step)
+        self.assertNotIn('        continue-on-error:', step)
+
     def test_policy_check_has_read_only_permissions_and_pinned_actions(self):
         policy = (ROOT / '.github/workflows/release-credential-safety.yml').read_text()
         self.assertIn('contents: read', policy)
