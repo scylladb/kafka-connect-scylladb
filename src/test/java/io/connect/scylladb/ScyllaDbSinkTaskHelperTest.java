@@ -7,6 +7,7 @@ import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
 import io.connect.scylladb.topictotable.TopicConfigs;
+import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -129,6 +130,36 @@ public class ScyllaDbSinkTaskHelperTest {
   }
 
   @Test
+  public void shouldTakeDeleteTimestampFromKeyField() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "key.id");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "MILLISECONDS");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 42L));
+
+    verify(session).delete("scylladb", "a_b_c");
+    verify(statement).setQueryTimestamp(42_000L);
+  }
+
+  @Test
+  public void shouldTakeWriteTimestampFromPerTopicField() {
+    settings.put("topic.a.b-c.ks1.t1.timestampField", "value.time");
+    settings.put("topic.a.b-c.ks1.t1.timestampUnit", "SECONDS");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(statement).setQueryTimestamp(100_000_000L);
+  }
+
+  @Test(expected = DataException.class)
+  public void shouldFailTombstoneWhenTimestampFieldIsInValue() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.time");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 1L));
+  }
+
+  @Test
   public void shouldDeleteDespiteValueMappedTtl() {
     settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __ttl=value.time");
     settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
@@ -208,5 +239,58 @@ public class ScyllaDbSinkTaskHelperTest {
     DataException ex = assertThrows(DataException.class,
         () -> helper().getBoundStatementForRecord(tombstone(TOPIC, 1L)));
     assertTrue(ex.getMessage(), ex.getMessage().contains("[region]"));
+  }
+
+  @Test
+  public void shouldTakeLegacyTimestampMappingInMicroseconds() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(42L);
+  }
+
+  @Test
+  public void shouldUseKafkaTimestampForLegacyMappingOnTombstone() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
+    ScyllaDbSinkTaskHelper helper = helper();
+
+    // The write resolves the mapping, so the tombstone reaches the legacy fallback.
+    helper.getBoundStatementForRecord(write(TOPIC, 42L));
+    helper.getBoundStatementForRecord(tombstone(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(42L);
+    verify(statement).setQueryTimestamp(1000L * 1000);
+  }
+
+  @Test
+  public void shouldPreferTimestampFieldOverLegacyMapping() {
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.id");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "MILLISECONDS");
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(42_000L);
+  }
+
+  @Test
+  public void shouldNotAlterTableWhenTimestampFieldIsMissing() {
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.lut");
+
+    assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+  }
+
+  @Test
+  public void shouldSkipTombstoneWithoutKafkaTimestampForMissingTable() {
+    when(session.tableExists(anyString(), anyString())).thenReturn(false);
+    SinkRecord tombstone = new SinkRecord("plain", 0, KEY_SCHEMA, key(1L), null, null, 2L, null,
+            TimestampType.NO_TIMESTAMP_TYPE);
+
+    assertNull(helper().getBoundStatementForRecord(tombstone));
+    verify(session, never()).delete(anyString(), anyString());
   }
 }
