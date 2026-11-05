@@ -291,6 +291,38 @@ public class RecordToBoundStatementConverterTest {
   }
 
   @Test
+  public void bindsTopLevelDatesInAnyTimeZone() {
+    TimeZone zone = TimeZone.getDefault();
+    try {
+      for (String id : Arrays.asList("America/New_York", "Pacific/Auckland")) {
+        TimeZone.setDefault(TimeZone.getTimeZone(id));
+        before();
+        when(preparedStatement.bind()).thenReturn(boundStatement);
+        Schema schema = SchemaBuilder.struct().field("day", org.apache.kafka.connect.data.Date.SCHEMA).build();
+        SinkRecord record = new SinkRecord("topic", 0, null, null, schema,
+            new Struct(schema).put("day", new Date(86_400_000L)), 0);
+        new RecordToBoundStatementConverter(preparedStatement).convert(record, null, ScyllaDbConstants.INSERT_OPERATION);
+
+        verify(boundStatement).setLocalDate("day", LocalDate.of(1970, 1, 2));
+      }
+    } finally {
+      TimeZone.setDefault(zone);
+    }
+  }
+
+  @Test
+  public void rejectsTopLevelDatesOutsideTheCqlRange() {
+    when(preparedStatement.bind()).thenReturn(boundStatement);
+    Schema schema = SchemaBuilder.struct().field("day", org.apache.kafka.connect.data.Date.SCHEMA).build();
+    SinkRecord record = new SinkRecord("topic", 0, null, null, schema,
+        new Struct(schema).put("day", new Date(TimeUnit.DAYS.toMillis(1L << 31))), 0);
+
+    DataException e = assertThrows(DataException.class, () -> new RecordToBoundStatementConverter(preparedStatement)
+        .convert(record, null, ScyllaDbConstants.INSERT_OPERATION));
+    assertTrue(String.valueOf(e.getCause()), e.getCause().getMessage().contains("outside the range of CQL type DATE"));
+  }
+
+  @Test
   public void bindsDateMapKeysByTheirOwnLogicalType() {
     column(0, "seen", DataTypes.mapOf(DataTypes.DATE, DataTypes.TIMESTAMP));
     Schema schema = SchemaBuilder.map(org.apache.kafka.connect.data.Date.SCHEMA, Timestamp.SCHEMA).build();

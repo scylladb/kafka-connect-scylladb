@@ -30,7 +30,6 @@ import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -139,7 +138,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       String fieldName,
       Date value
   ) {
-    state.statement = state.statement.setLocalDate(fieldName, localDate(value));
+    state.statement = state.statement.setLocalDate(fieldName, cqlDate(fieldName, localDate(value)));
     state.parameters++;
   }
 
@@ -352,8 +351,7 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
           return ((Date) value).toInstant();
         }
         if (dataType.equals(DataTypes.DATE)) {
-          // A Connect Date is midnight UTC, so its epoch day is its date in any JVM time zone.
-          return cqlDate(fieldName, LocalDate.ofEpochDay(Math.floorDiv(((Date) value).getTime(), MILLIS_PER_DAY)));
+          return cqlDate(fieldName, localDate((Date) value));
         }
         if (dataType.equals(DataTypes.TIME)) {
           return localTime((Date) value);
@@ -430,8 +428,9 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
         String.format("Field '%s' value cannot be converted to CQL type %s", fieldName, dataType), cause);
   }
 
+  // A Connect Date is midnight UTC, so its epoch day is its date in any JVM time zone.
   private static LocalDate localDate(Date value) {
-    return value.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    return LocalDate.ofEpochDay(Math.floorDiv(value.getTime(), MILLIS_PER_DAY));
   }
 
   private static LocalTime localTime(Date value) {

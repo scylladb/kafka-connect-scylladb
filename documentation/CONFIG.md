@@ -415,6 +415,9 @@ ISO-8601). A `java.util.Date` without a schema, such as one a transform adds, bi
 `timestamp` column; inside collections and UDTs it converts to `timestamp`, `date` or `time`;
 a `date` keeps only the UTC day, and a `time` takes only a value within the first day, as a Connect
 `Time` holds.
+A top-level `Date` field also binds its UTC day. Earlier versions used the worker's time zone, so a
+worker behind UTC stored the previous day; where that day is in the primary key, later updates and
+deletes target the correct day and leave the earlier row in place.
 Map keys that ScyllaDB would store as one fail the record: decimals that differ only in scale,
 such as `1.0` and `1.00`, and timestamps that differ below a millisecond, also inside frozen
 collection and UDT keys.

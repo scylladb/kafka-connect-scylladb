@@ -43,7 +43,7 @@ import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
@@ -402,7 +402,7 @@ public class ScyllaDbSinkConnectorIT {
               new RowValidator(
                       topic,
                       ImmutableMap.of("id", index),
-                      ImmutableMap.of("id", index, "value", Instant.ofEpochMilli(date.getTime()).atZone(ZoneId.systemDefault()).toLocalDate())
+                      ImmutableMap.of("id", index, "value", Instant.ofEpochMilli(date.getTime()).atZone(ZoneOffset.UTC).toLocalDate())
               )
       );
     }
