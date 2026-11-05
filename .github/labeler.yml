@@ -1,0 +1,11 @@
+# One support-path union must match every file, including rename origins.
+# Keep release build controls and packaged logos visible.
+omit-from-release-notes:
+  - changed-files:
+      - all-globs-to-all-files:
+          - '{.github/**,src/test/**,documentation/**,README.md,.gitignore,renovate.json,scripts/release/test_*.py,scripts/release/workflow_helpers.py}'
+          - '!.github/workflows/release*.yml'
+          - '!.github/workflows/label-release-notes.yml'
+          - '!.github/actions/release-*/**'
+          - '!.github/scripts/release-notes-guard.cjs'
+          - '!.github/{release.yml,labeler.yml,package.json,package-lock.json}'

@@ -1,0 +1,297 @@
+# Repository release signing
+
+The public certificate in `publisher.asc` is safe to commit and is registered on
+`scylladb-publisher`. Keep it available to consumers; it does not belong in secrets.
+
+* Certification fingerprint: `2925D0DDD3EACC577C0C35978962794183DB19B1`
+* Signing fingerprint: `A7946F216C34BA5CEBE50334646C1DE44A8A9842`
+* Identity: `ScyllaDB Publisher (scylladb/kafka-connect-scylladb) <publish.code@scylladb.com>`
+* Expiration: `2028-10-19T15:46:14+00:00`
+
+Choose **Release** (`release.yml`) to publish or **Release dry run**
+(`release-dry-run.yml`) to stage an unpublished Central deployment. Both accept
+`target-tag` and an optional `release-version`. Only Release offers `skip-tests`;
+dry runs always run project tests during validation. The dry-run workflow has
+read-only repository permissions and contains no release-blocker checks, SCM push,
+GitHub Release creation, or Confluent notification steps.
+
+Dispatch either workflow from `master`. Use `target-tag=master` for the next
+release, or a numeric historical `X.Y.Z` tag to rebuild its predecessor. Versions
+and tags have no `v` prefix. Both fresh runners use Java 25 and checksum-verified
+Maven 3.9.16; the connector still compiles for Java 11. Unsigned validation runs
+the existing project tests with Docker available. Signed CI phases skip unit and
+integration tests and Docker fixtures using `skipTests`, `skipITs`,
+`skipIntegrationTests`, and `docker.skip`; tests already ran before approval.
+
+Both workflows use the same local composite actions for validation and signed
+preparation, and the same Make recipes and signing helpers for release operations.
+Each workflow first runs a `validate` job on its own runner without production
+signing or package-publishing credentials. Shown as `Pre-release checks`, it checks
+the dispatch branch, target-tag and optional release-version syntax before setting
+up Java or Maven. It checks the release tooling and target policy, then builds the
+release profile with signing disabled. Project tests run here unless `skip-tests`
+is selected for a real release; release helper tests always run.
+Validation records the exact target commit as a job output and rechecks `master`
+after the build, before approval is requested. Release also checks release
+blockers before validation, after the build, after approval, and before
+publication. Any open issue or pull request labelled `release-blocker` blocks
+Release, including historical tag releases and runs with `skip-tests` selected.
+Each check reads every page of blockers and fails if the GitHub API cannot be
+queried. Close the item or remove its label once the blocker is resolved.
+The summary explains that the remaining approval grants access to
+release credentials.
+
+Each workflow's `release` job depends on successful validation and uses a fresh
+runner. Only this job uses the GitHub deployment environment `release`, so approval
+is requested after validation finishes. It checks out the validated commit, rejects `master` if
+it has advanced, and independently checks target policy before importing keys.
+It does not restore the validation workspace or Maven cache. Signed preparation,
+signature verification, and publication or dry-run staging happen after approval;
+project tests are not repeated with production credentials. Historical tags are
+resolved only by validation, so moving a tag during the approval wait cannot change
+the source.
+
+Job-level concurrency uses the same `connector-release` group for both workflows
+and serializes only `release`, including signed dry runs, with
+`cancel-in-progress: false`. Validation can run while another release is waiting
+for approval or publishing. The protected job still rechecks the validated commit
+after approval; Release also rechecks blockers, since either can change while it
+waits.
+With the default single pending slot, a newer queued release job can replace a
+pending one; an active publishing job is never canceled by this concurrency rule.
+Cancel obsolete approval waits deliberately.
+See [GitHub's concurrency rules](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
+Before running it, a repository owner must create that environment if missing,
+or verify its existing protection and secrets. The environment must
+require approval by `dkropachev` or `nikagra` (self-review allowed, administrator bypass
+disabled), allow deployments only from `master`, and store
+`GPG_PRIVATE_KEY`
+(ASCII-armored protected signing-subkey export) and `GPG_PASSPHRASE` (single-line
+passphrase) as environment secrets. Migrate any repository-level copies to this
+environment and remove those copies after validating the migration. The workflow
+binding does not configure protection or migrate secrets; owner setup remains
+required, including before dry runs and reruns.
+Never upload the full primary private-key backup to CI. Packages, release commits,
+and annotated release tags use the same signing subkey, selected by its complete
+fingerprint with `!`. The primary key certifies the signing subkey and remains offline.
+
+Locally, the `release-prepare`, `release`, and `release-dry-run` Make targets
+require the active `gh` account to be `scylladb-publisher` before importing
+credentials or changing the checkout; switch accounts with `gh auth switch` if
+needed. Local dry runs and internal release recipes enforce the same account
+requirement. In Actions, the protected `release` environment authorizes operators,
+including dry runs and reruns. The triggering actor need not be the publisher
+account: signing still uses the repository's pinned publisher subkey and identity.
+
+Each target runs its Maven commands in a scoped `signing.py exec` session. The
+session imports only the protected signing-subkey export, checks that primary
+private material is absent, and verifies a fresh-agent signing preflight against
+the pinned public certificate. Anonymous pipes supply the key import and passphrase;
+neither credential is written to a temporary file or included in command-line
+arguments. Runtime Git settings apply only to the command and its children,
+including Maven's local checkout clones. Sessions leave checkout Git configuration
+unchanged and remove their temporary keyrings on success or failure. No credentials
+or signing-session state are written to `GITHUB_ENV` or retained between workflow
+steps. The workflow records the public pre-preparation commit SHA there as
+`RELEASE_BASE_COMMIT` for later verification.
+
+Maven's forked builds inherit the complete signing fingerprint with `!` through
+`MAVEN_OPTS`; the GPG plugin receives `MAVEN_GPG_PASSPHRASE` through its environment.
+Every GPG invocation reads the current passphrase, so checks and builds can outlive
+the agent's passphrase cache. The protected signing-subkey export is consumed by
+the session and removed from the child environment. Maven release builds need
+access to the session keyring and passphrase while signing artifacts.
+
+For maintainer-driven release preparation:
+
+```sh
+export RELEASE_GPG_PRIVATE_KEY_FILE=/private/path/signing-private.asc
+export RELEASE_GPG_PASSPHRASE_FILE=/private/path/passphrase.txt
+export RELEASE_VERSION=X.Y.Z
+export RELEASE_BASE_COMMIT=$(git rev-parse HEAD)
+make release-prepare
+# Run additional checks against the prepared release.
+```
+
+Then choose exactly one perform command:
+
+- `make release` performs and automatically publishes the Central deployment.
+- `make release-dry-run` stages a real unpublished Central deployment instead.
+
+A successful dry run removes
+`release.properties`, just as a real release does; do not then run `make release`
+in that checkout. Inspect and publish or drop the staged deployment in Central
+Portal, following the partial-release recovery instructions below.
+
+Maven owns version changes, release and development commits, annotated tags, and
+artifact signing. The Make recipes retain sanitized Maven stdout and stderr.
+Local commands default to `/tmp/release-logs`; `RELEASE_LOG_DIR` can select
+another trusted directory. Actions uses its runner temporary directory.
+Preparation verifies every new commit and the release tag against the pinned
+certificate before closing its session. The workflow repeats verification with
+public material only. Perform and dry-run commands verify prepared history before
+opening a new signing session. Keep `RELEASE_BASE_COMMIT` set to the original
+pre-preparation commit for those commands; verification fails without that trusted
+boundary. Do not derive it from the release tag's parent or replace it after
+preparation. Do not change or replace existing release tags. A failed verification
+blocks publication.
+
+Both jobs check out the workflow's launch SHA and preserve its current Makefile,
+guard, signing and asset helpers, public certificate, and shared blocker/Maven
+setup scripts before selecting the target source. Test files are not preserved.
+The release job uses the validated commit SHA instead of resolving the input ref
+again. Explicit recursive Makefile selection keeps every phase on those preserved
+recipes. Target POM and source files still come from the selected checkout and
+must pass credential safety checks before any signing key is imported.
+
+Complex checks can run before preparation or against signed outputs after a session
+closes. Checks that need additional signatures can use their own scoped invocation:
+
+```sh
+python3 scripts/release/signing.py exec make YOUR_CHECK_TARGET
+```
+
+The low-level helper does not impose release-account policy. Wrapped commands have
+no overall time limit; individual GPG operations have their own timeout. Wrapped
+commands propagate their exit status when session cleanup succeeds. A cleanup
+failure returns status 1, including after a failed command. GPG and Git errors
+identify a fixed operation and status or category without printing command arguments,
+captured output, or exception payloads. GitHub publication failures retain sanitized
+stdout and stderr; timeouts and sanitizer failures retain fixed diagnostics.
+`sign-files FILE...` signs and verifies a
+batch of additional artifacts using one shared public keyring, preserving existing
+signatures on reruns. Run `make test-release-signing` to test with disposable keys.
+
+Consumers should obtain this public certificate from this repository at a reviewed
+commit, check the certification fingerprint above through a trusted channel, and
+verify release signatures. The Ubuntu keyserver can also serve the certificate:
+
+```sh
+gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys 2925D0DDD3EACC577C0C35978962794183DB19B1
+gpg --fingerprint 2925D0DDD3EACC577C0C35978962794183DB19B1
+gpg --status-fd 1 --verify ARTIFACT.asc ARTIFACT
+```
+
+Require exactly one `GOODSIG` and one `VALIDSIG` record. The `GOODSIG` key ID must
+match the signing fingerprint's final 16 hexadecimal digits, and `VALIDSIG` must
+contain the complete signing fingerprint above and the expected primary
+fingerprint. Reject `EXPKEYSIG`, `REVKEYSIG`, `EXPSIG`, `BADSIG`, `ERRSIG`,
+`FAILURE`, `ERROR`, `KEYEXPIRED`, `KEYREVOKED`, or `SIGEXPIRED`, even when a
+matching `VALIDSIG` is also present. `git verify-tag --raw TAG` and
+`git verify-commit --raw COMMIT` provide the equivalent check for Git objects.
+Keyserver presence alone establishes neither trust nor the expected repository
+identity.
+
+Rotate by preparing a new independent certificate, validating its protected subkey,
+registering its public certificate on the publisher account, publishing the public
+certificate, reviewing fingerprint/public-certificate updates together, and updating
+the secret pair in a coordinated release pause. Keep old public certificates available
+for historical releases. Never revoke the previous key merely to rotate it. If a key
+is compromised, stop releases and use the offline revocation certificate; fix the
+exposure before resuming. Do not rerun publication after a partial release without
+following the repository's recovery instructions.
+
+## Token migration and release prerequisites
+
+Store `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE`, `SONATYPE_TOKEN_USERNAME`, and
+`SONATYPE_TOKEN_PASSWORD` in the protected `release` environment. When migrating
+repository-level copies, remove them only after verifying the environment's
+protection settings, matching protected signing subkey, and original secret values.
+GitHub cannot return existing secret values. Obtain trusted originals; do not copy
+placeholder values or delete repository secrets merely because names match. Keep `EMAIL_USERNAME` and `EMAIL_PASSWORD`
+at repository scope.
+
+Keep releases paused while either Sonatype secret is missing or contains
+`PLACEHOLDER_NOT_CONFIGURED`. Configure real Central Portal user tokens before
+releasing. Missing or placeholder tokens fail before
+workflow preparation and before the upload-capable `make release` and
+`make release-dry-run` commands. Local signing preflight and preparation remain
+available without Sonatype credentials. Upload secrets with `gh secret set` using
+stdin or input redirection; never put credentials in arguments or commit private
+material. Check local file checksums against the offline `metadata.json` first.
+
+Local Maven needs a `central` server in `~/.m2/settings.xml`, with username
+`${env.SONATYPE_TOKEN_USERNAME}` and password `${env.SONATYPE_TOKEN_PASSWORD}`.
+Export the real tokens in the command environment. Keep passphrases in environment
+variables or private input files, and avoid Maven debug logging and CLI credential
+properties. The workflow generates the same server configuration with setup-java.
+
+`release-dry-run` performs a real, signed upload to Central with
+`release.autopublish=false`, leaving an unpublished deployment for manual inspection.
+It requires real Sonatype credentials. It does not push SCM changes, create a GitHub
+release, or send Confluent email. Delete unused deployments in the Central Portal.
+See [Sonatype's Maven publishing documentation](https://central.sonatype.org/publish/publish-portal-maven/).
+
+## GitHub assets and recovery
+
+The connector JAR and connector ZIP are signed and verified with the same exact subkey
+after `release:perform`. GitHub receives both files and their detached `.asc`
+signatures. Tag, version and filenames come from `release.properties` and the tagged
+Maven POM, so unrelated or newer tags cannot select another release's assets.
+Preparation saves verified metadata in `target/release-prepared.properties` because
+Maven removes `release.properties` after a successful perform.
+`make github-release` verifies the existing signatures with the public certificate
+before checking GitHub. It refuses an existing release or draft and never
+regenerates signatures. Discovery errors stop publication. For a new release,
+it creates a draft with all four files and an existing remote tag, then publishes
+only after all uploads succeed.
+New published releases have immutable assets and tags. All tags (`refs/tags/*`) are also
+protected against updates and deletion without bypass.
+Enabling release immutability does not make already-published releases immutable.
+The separate [tag rules](https://github.com/scylladb/kafka-connect-scylladb/rules/26651214)
+protect existing tags too.
+This follows [GitHub's draft, attach, publish sequence](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases#best-practices-for-publishing-immutable-releases).
+Maven stdout and stderr artifacts contain sanitized output only and are retained
+separately for seven days. Output is buffered in memory, then sanitized after Maven
+exits. Capture or sanitization failures withhold incomplete output; no raw output
+is spooled. Artifact upload and notification failures remain nonfatal.
+Forced cancellation can stop capture before logs are written. The signing helper
+allows its owned process group a two-second grace before forced termination;
+this does not guarantee complete cancellation diagnostics.
+After Central publication succeeds for `master`, the workflow pushes the signed
+commits and tag before signing GitHub assets so an asset-signing failure leaves
+the prepared Git objects available for recovery.
+
+After a partial release, **do not rerun preparation or the entire workflow**. Record
+the original launch SHA, `RELEASE_BASE_COMMIT`, prepared tag and signed commit IDs,
+Central deployment ID and any published assets before choosing recovery:
+
+GitHub-hosted runs retain sanitized logs only. Signed Git objects, prepared
+metadata and build assets disappear when the runner is discarded. The object and
+asset recovery below requires an intact local release checkout or a separately
+retained trusted copy; log artifacts cannot supply it. If those materials are
+unavailable after a CI failure, stop and investigate the Central deployment,
+remote refs and GitHub draft with the maintainers. Do not recreate signed objects,
+overwrite published assets or start another release to hide the partial result.
+
+1. If preparation failed before upload, inspect the local commits/tag and sanitized
+   logs. Keep a recoverable copy. Restart from a clean checkout of the original
+   baseline only after confirming no deployment or remote tag exists.
+2. If Central accepted an upload, inspect its status in the Portal. Publish the
+   already validated deployment or drop an unpublished dry-run deployment as
+   appropriate. Never upload another release version to hide an uncertain result.
+   Published coordinates are immutable.
+3. If publication succeeded but SCM push failed, recover the exact signed release
+   and development commits plus annotated tag from an intact original local
+   checkout or a trusted retained copy. Verify them with the public certificate and original baseline,
+   check the remote branch and tag, then reconcile and push those exact objects.
+   Sanitized log artifacts alone cannot reconstruct Git objects. If the objects
+   are unavailable, stop and investigate rather than recreate or move the tag.
+4. If GitHub publication stopped, inspect whether the release is still a draft
+   and verify its exact prepared tag. For a draft, recover matching metadata and
+   trusted local assets, compare the hashes of existing draft files, and verify detached
+   signatures with the public certificate. Upload only missing files without
+   `--clobber`, then publish the draft after all four files are complete and
+   verified (`gh release edit TAG --draft=false`). If an existing file differs,
+   stop and investigate instead of overwriting it. Do not rerun the automated
+   `github-release` target on an existing draft. Published immutable assets and
+   tags cannot be repaired in place; corrections require a new release version.
+5. If only Confluent notification failed, send the message in the workflow summary
+   or fallback issue manually. Do not run Maven or publish again.
+
+Historical releases continue to use the predecessor of the requested `X.Y.Z` tag,
+subject to the same credential safety checks. Tags use numeric `X.Y.Z`, without a `v` prefix. Only the validated SHA is handed to
+the release runner. As before, historical targets do not push changes, create a
+GitHub release or send email. Old POMs with unsupported signing/publishing plugins
+are rejected before importing credentials.
