@@ -339,8 +339,8 @@ def check_policy(root):
     makefile = root / "Makefile"
     if makefile.exists():
         for line in makefile.read_text().splitlines():
-            if re.search(r"\$\(MVNCMD\).*\brelease:", line) and "$(RELEASE_GUARD)" not in line:
-                raise Unsafe("release target must use sanitized log capture")
+            if re.search(r"(?:\$[({](?:MVNCMD|mvn)[)}]|\bmvnw?\b).*\brelease:", line) and "$(RELEASE_GUARD)" not in line:
+                raise Unsafe("release target must use guarded output suppression")
 
 
 def secret_forms(env):

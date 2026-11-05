@@ -3,193 +3,183 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      dry-run:
-        type: boolean
-        description: 'dry-run: run without pushing SCM changes to upstream'
-        default: false
-
       skip-tests:
         type: boolean
-        description: 'skip-tests: do not run tests while releasing'
+        description: 'skip-tests: skip project tests during validation; release helper tests always run'
         default: false
 
       target-tag:
         type: string
-        description: 'target-tag: re-release a tag with credential-safe release configuration'
+        description: 'target-tag: re-release a compatible semver tag; unsafe historical targets are rejected'
         default: master
 
+      release-version:
+        required: false
+        type: string
+        description: 'release-version: override next version'
+
 jobs:
+  validate:
+    name: Pre-release checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      target-sha: ${{ steps.target.outputs.target-sha }}
+    steps:
+      - name: Checkout validation source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for open release blockers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/check-blockers.sh
+
+      - name: Validate release target
+        id: target
+        uses: ./.github/actions/release-validate
+        with:
+          target-tag: ${{ inputs.target-tag }}
+          release-version: ${{ inputs.release-version }}
+          skip-tests: ${{ inputs.skip-tests }}
+
+      - name: Recheck for open release blockers before approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/release-safety/check-blockers.sh"
+
+      - name: Summarize pre-release checks
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ## Pre-release checks passed
+
+          Release inputs, tooling, target policy, and the unsigned release build passed.
+          Project tests ran unless skip-tests was selected.
+
+          The Release job now requires approval for the protected release environment.
+          Signing and publishing credentials are only used after approval.
+          EOF
+
+      - name: Upload sanitized validation-stdout
+        id: upload-validation-stdout
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validation-maven-stdout
+          path: ${{ runner.temp }}/release-logs/stdout.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload sanitized validation-stderr
+        id: upload-validation-stderr
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validation-maven-stderr
+          path: ${{ runner.temp }}/release-logs/stderr.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Warn if sanitized validation log upload failed
+        if: always() && (steps.upload-validation-stdout.outcome == 'failure' || steps.upload-validation-stderr.outcome == 'failure')
+        run: echo "::warning::Sanitized validation logs could not be uploaded."
+
   release:
     name: Release
+    needs: validate
     runs-on: ubuntu-latest
-
+    environment: release
+    # Let pre-release checks run independently; serialize only credentialed work.
+    # Never cancel an in-progress signing or publishing job.
+    concurrency:
+      group: connector-release
+      cancel-in-progress: false
     permissions:
       contents: write
       issues: write
-
     steps:
-      - name: Check for open release blockers
-        if: inputs.dry-run == false
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          blocker="$(
-            gh issue list \
-              --repo "$GITHUB_REPOSITORY" \
-              --state open \
-              --label release-blocker \
-              --limit 1 \
-              --json title,url \
-              --jq '.[0] | select(.) | "\(.url) — \(.title)"'
-          )"
-          if [[ -n "$blocker" ]]; then
-            echo "::error::Release blocked by open issue: $blocker"
-            exit 1
-          fi
-          echo "No open release blockers."
-
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Preserve release guard
-        run: |
-          echo "RELEASE_GUARD=$RUNNER_TEMP/release-guard.py" >> "$GITHUB_ENV"
-          echo "RELEASE_LOG_DIR=$RUNNER_TEMP/release-logs" >> "$GITHUB_ENV"
-          cp scripts/release/guard.py "$RUNNER_TEMP/release-guard.py"
-
-      - name: Checkout historical release target
-        if: inputs.target-tag != 'master'
-        env:
-          TARGET_TAG: ${{ inputs.target-tag }}
-        run: |
-          git fetch --prune --unshallow || true
-          target_commit=$(git rev-parse --verify --end-of-options "${TARGET_TAG}~1^{commit}")
-          git checkout --detach "$target_commit" --
-          git tag -d -- "$TARGET_TAG"
-
-      - name: Validate release target before importing credentials
-        run: python3 "$RELEASE_GUARD" check
-
-      - name: Set up Java
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
-          java-version: '25'
-          distribution: 'temurin'
-          server-id: central
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          # setup-java v6 defaults this to GPG_PASSPHRASE and writes it into settings.xml as
-          # gpg.passphraseEnvName, so the gpg plugin would ignore MAVEN_GPG_PASSPHRASE below
-          gpg-passphrase-env-var: MAVEN_GPG_PASSPHRASE
-          server-username: SONATYPE_TOKEN_USERNAME
-          server-password: SONATYPE_TOKEN_PASSWORD
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
-      - name: Configure Git user
-        run: |
-          git config user.name "ScyllaDB Promoter"
-          git config user.email "github-promoter@scylladb.com"
-
-      - name: Clean project
-        run: python3 "$RELEASE_GUARD" run mvn -B -ntp clean
-
-      - name: Clean release
-        run: python3 "$RELEASE_GUARD" run mvn -B -ntp release:clean
-
-      - name: Prepare release
-        env:
-          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-          SKIP_TESTS: ${{ inputs.skip-tests }}
-        run: |
-          args=(-DpushChanges=false)
-          if [[ "$SKIP_TESTS" == "true" ]]; then
-            MAVEN_OPTS="${MAVEN_OPTS:-} -DskipTests=true -DskipITs=true"
-          fi
-          export MAVEN_OPTS
-          python3 "$RELEASE_GUARD" run mvn -B -ntp release:prepare "${args[@]}"
-
-      - name: Recheck for open release blockers
-        if: inputs.dry-run == false
+      - name: Check for open release blockers
         env:
           GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/check-blockers.sh
+
+      - name: Prepare signed release
+        uses: ./.github/actions/release-prepare
+        with:
+          target-tag: ${{ inputs.target-tag }}
+          target-sha: ${{ needs.validate.outputs.target-sha }}
+          release-version: ${{ inputs.release-version }}
+          signing-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          signing-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          sonatype-token-username: ${{ secrets.SONATYPE_TOKEN_USERNAME }}
+          sonatype-token-password: ${{ secrets.SONATYPE_TOKEN_PASSWORD }}
+
+      - name: Recheck for open release blockers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/release-safety/check-blockers.sh"
+
+      - name: Recheck master before publication
+        if: inputs.target-tag == 'master'
         run: |
           set -euo pipefail
-          blocker="$(
-            gh issue list \
-              --repo "$GITHUB_REPOSITORY" \
-              --state open \
-              --label release-blocker \
-              --limit 1 \
-              --json title,url \
-              --jq '.[0] | select(.) | "\(.url) — \(.title)"'
-          )"
-          if [[ -n "$blocker" ]]; then
-            echo "::error::Release blocked by open issue: $blocker"
+          git fetch --no-tags origin master
+          if [[ "$(git rev-parse FETCH_HEAD)" != "$RELEASE_BASE_COMMIT" ]]; then
+            echo "::error::master advanced after release preparation; start a new release workflow."
             exit 1
           fi
-          echo "No open release blockers."
 
       - name: Perform release
         env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
           SONATYPE_TOKEN_USERNAME: ${{ secrets.SONATYPE_TOKEN_USERNAME }}
           SONATYPE_TOKEN_PASSWORD: ${{ secrets.SONATYPE_TOKEN_PASSWORD }}
-          DRY_RUN: ${{ inputs.dry-run }}
-          SKIP_TESTS: ${{ inputs.skip-tests }}
-        run: |
-          args=()
-          if [[ "$DRY_RUN" != "true" ]]; then
-            args+=(-Drelease.autopublish=true)
-          fi
-          if [[ "$SKIP_TESTS" == "true" ]]; then
-            MAVEN_OPTS="${MAVEN_OPTS:-} -DskipTests=true -DskipITs=true"
-          fi
-          export MAVEN_OPTS
-          python3 "$RELEASE_GUARD" run mvn -B -ntp release:perform "${args[@]}"
+          RELEASE_SKIP_TESTS: 'true'
+        run: make -f "$RUNNER_TEMP/release-safety/Makefile" RELEASE_GUARD="$RUNNER_TEMP/release-safety/guard.py" release
 
       - name: Push changes to SCM
-        if: ${{ inputs.dry-run == false && inputs.target-tag == 'master' }}
+        if: inputs.target-tag == 'master'
         run: |
           git status && git log -3
-          git push origin --follow-tags -v
+          git push origin --follow-tags -v HEAD:refs/heads/master
+
+      - name: Sign and verify GitHub assets
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: python3 "$RUNNER_TEMP/release-safety/assets.py" sign
 
       - name: Create GitHub Release
-        if: inputs.dry-run == false && inputs.target-tag == 'master'
+        if: inputs.target-tag == 'master'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RELEASE_TAG=$(git describe --tags --abbrev=0)
-          VERSION=${RELEASE_TAG#v}
-          JAR="target/checkout/target/kafka-connect-scylladb-${VERSION}.jar"
-          ZIP="target/checkout/target/components/packages/scylladb-kafka-connect-scylladb-${VERSION}.zip"
-          if gh release view "${RELEASE_TAG}" &>/dev/null; then
-            gh release upload "${RELEASE_TAG}" "${JAR}" "${ZIP}" --clobber
-          else
-            gh release create "${RELEASE_TAG}" "${JAR}" "${ZIP}" \
-              --title "${VERSION}" \
-              --generate-notes
-          fi
+          GH_TOKEN: ${{ github.token }}
+        run: make -f "$RUNNER_TEMP/release-safety/Makefile" RELEASE_GUARD="$RUNNER_TEMP/release-safety/guard.py" github-release
 
-      # Notification steps are continue-on-error: a bounced email must not turn a
-      # published release red, because a red release invites a re-run, and
-      # re-running this single-job workflow calls mvn release:prepare again and
-      # cuts a spurious version.
+      # A notification failure must not obscure successful publication. Recover
+      # notification separately; a fresh release dispatch would cut a new version.
       - name: Extract release version
         id: extract-version
-        if: inputs.dry-run == false && inputs.target-tag == 'master'
+        if: inputs.target-tag == 'master'
         continue-on-error: true
-        run: |
-          # tagNameFormat is @{project.version}, so the tag *is* the version — no v prefix.
-          RELEASE_VERSION=$(git describe --tags --abbrev=0)
-          # Exported before validation so the fallback issue can quote what was found.
-          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
-          if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::warning::unexpected release tag '${RELEASE_VERSION}'; skipping the Confluent email"
-            exit 1
-          fi
+        run: python3 "$RUNNER_TEMP/release-safety/assets.py" identity >> "$GITHUB_ENV"
 
       - name: Notify Confluent Hub
         id: notify-confluent
-        if: inputs.dry-run == false && inputs.target-tag == 'master' && steps.extract-version.outcome == 'success'
+        if: inputs.target-tag == 'master' && steps.extract-version.outcome == 'success'
         continue-on-error: true
         uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
         with:
@@ -206,26 +196,25 @@ jobs:
             Dear CCET Team,
 
             Please publish version ${{ env.RELEASE_VERSION }} of kafka-connect-scylladb:
-            https://github.com/scylladb/kafka-connect-scylladb/releases/download/${{ env.RELEASE_VERSION }}/scylladb-kafka-connect-scylladb-${{ env.RELEASE_VERSION }}.zip
+            https://github.com/scylladb/kafka-connect-scylladb/releases/download/${{ env.RELEASE_TAG }}/scylladb-kafka-connect-scylladb-${{ env.RELEASE_VERSION }}.zip
 
             Best regards,
             Drivers Team at ScyllaDB
 
       - name: Open fallback issue if Confluent was not notified
-        if: inputs.dry-run == false && inputs.target-tag == 'master' && (steps.extract-version.outcome == 'failure' || steps.notify-confluent.outcome == 'failure')
+        if: inputs.target-tag == 'master' && (steps.extract-version.outcome == 'failure' || steps.notify-confluent.outcome == 'failure')
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           BODY=$(cat <<EOF
           The automated notification to Confluent failed during the release of
-          \`${RELEASE_VERSION:-unknown tag}\`
+          \`${RELEASE_TAG:-unknown tag}\`
           ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})).
           The release itself succeeded — only the email did not go out.
 
-          **Do not re-run the Release workflow.** It would call \`mvn release:prepare\`
-          again and cut an extra version. Send the message below by hand, then close
-          this issue.
+          **Do not re-run the Release workflow.** Send the message below by hand,
+          then close this issue.
 
           To: confluent-hub@confluent.io
           CC: drivers-team@scylladb.com
@@ -234,7 +223,7 @@ jobs:
           Dear CCET Team,
 
           Please publish version ${RELEASE_VERSION} of kafka-connect-scylladb:
-          https://github.com/scylladb/kafka-connect-scylladb/releases/download/${RELEASE_VERSION}/scylladb-kafka-connect-scylladb-${RELEASE_VERSION}.zip
+          https://github.com/scylladb/kafka-connect-scylladb/releases/download/${RELEASE_TAG}/scylladb-kafka-connect-scylladb-${RELEASE_VERSION}.zip
 
           Best regards,
           Drivers Team at ScyllaDB
@@ -247,19 +236,31 @@ jobs:
           gh issue create \
             --repo "${GITHUB_REPOSITORY}" \
             --assignee "${GITHUB_ACTOR}" \
-            --title "Manual action: notify Confluent Hub about ${RELEASE_VERSION:-the latest release}" \
+            --title "Manual action: notify Confluent Hub about ${RELEASE_TAG:-the latest release}" \
             --body "$BODY"
 
-      - name: Upload sanitized release logs
-        id: upload-logs
+      - name: Upload sanitized stdout
+        id: upload-stdout
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: maven-release-logs
-          path: ${{ runner.temp }}/release-logs/*.log
+          name: maven-stdout
+          path: ${{ runner.temp }}/release-logs/stdout.log
           if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload sanitized stderr
+        id: upload-stderr
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maven-stderr
+          path: ${{ runner.temp }}/release-logs/stderr.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Warn if sanitized log upload failed
-        if: always() && steps.upload-logs.outcome == 'failure'
+        if: always() && (steps.upload-stdout.outcome == 'failure' || steps.upload-stderr.outcome == 'failure')
         run: echo "::warning::Sanitized release logs could not be uploaded; do not re-run a published release."

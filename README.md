@@ -85,3 +85,6 @@ Reporting Kafka Metrics
 
 Refer the following [confluent documentation](https://docs.confluent.io/current/kafka/metrics-reporter.html)
 to access kafka related metrics.
+
+Release maintainers: see [release signing and recovery](scripts/release/SIGNING.md) and
+[release notes](.github/RELEASE_NOTES.md).
