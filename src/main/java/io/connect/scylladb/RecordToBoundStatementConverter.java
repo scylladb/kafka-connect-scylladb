@@ -5,6 +5,7 @@ import com.datastax.oss.driver.api.core.ProtocolVersion;
 import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
+import com.datastax.oss.driver.api.core.data.GettableByIndex;
 import com.datastax.oss.driver.api.core.data.UdtValue;
 import com.datastax.oss.driver.api.core.type.DataType;
 import com.datastax.oss.driver.api.core.type.DataTypes;
@@ -26,9 +27,11 @@ import org.apache.kafka.connect.errors.DataException;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.time.DateTimeException;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -286,9 +289,10 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       }
       MapType mapType = (MapType) dataType;
       Map<Object, Object> converted = new LinkedHashMap<>();
+      Set<Object> distinctKeys = new HashSet<>();
       for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
         Object key = toCqlElement(fieldName, entry.getKey(), keySchema(schema), mapType.getKeyType(), registry);
-        if (converted.containsKey(key)) {
+        if (!distinctKeys.add(distinctKey(key))) {
           // Distinct JSON keys, such as "1" and "01" for an int key, would otherwise overwrite each other.
           throw new DataException(String.format("Field '%s' has more than one key that converts to %s", fieldName, key));
         }
@@ -374,6 +378,41 @@ class RecordToBoundStatementConverter extends RecordConverter<RecordToBoundState
       // A timestamp past the range of epoch milliseconds overflows when encoded.
       throw cannotConvert(fieldName, dataType, e);
     }
+  }
+
+  // ScyllaDB compares decimals by value, so 1.0 and 1.00 are the same key, and the driver writes
+  // timestamps in whole milliseconds, so keys that differ below that are too. This also holds inside
+  // a frozen collection, tuple or UDT key.
+  private static Object distinctKey(Object key) {
+    if (key instanceof BigDecimal) {
+      return ((BigDecimal) key).stripTrailingZeros();
+    }
+    if (key instanceof Instant) {
+      return ((Instant) key).truncatedTo(ChronoUnit.MILLIS);
+    }
+    if (key instanceof Collection) {
+      Collection<Object> normalized = key instanceof Set ? new HashSet<>() : new ArrayList<>();
+      for (Object element : (Collection<?>) key) {
+        normalized.add(distinctKey(element));
+      }
+      return normalized;
+    }
+    if (key instanceof Map) {
+      Map<Object, Object> normalized = new HashMap<>();
+      for (Map.Entry<?, ?> entry : ((Map<?, ?>) key).entrySet()) {
+        normalized.put(distinctKey(entry.getKey()), distinctKey(entry.getValue()));
+      }
+      return normalized;
+    }
+    if (key instanceof GettableByIndex) {
+      GettableByIndex fields = (GettableByIndex) key;
+      List<Object> normalized = new ArrayList<>();
+      for (int i = 0; i < fields.size(); i++) {
+        normalized.add(distinctKey(fields.getObject(i)));
+      }
+      return normalized;
+    }
+    return key;
   }
 
   // The driver writes a date as a 32-bit day count, which wraps instead of failing outside that range.

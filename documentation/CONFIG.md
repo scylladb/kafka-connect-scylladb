@@ -415,5 +415,8 @@ ISO-8601). A `java.util.Date` without a schema, such as one a transform adds, bi
 `timestamp` column; inside collections and UDTs it converts to `timestamp`, `date` or `time`;
 a `date` keeps only the UTC day, and a `time` takes only a value within the first day, as a Connect
 `Time` holds.
+Map keys that ScyllaDB would store as one fail the record: decimals that differ only in scale,
+such as `1.0` and `1.00`, and timestamps that differ below a millisecond, also inside frozen
+collection and UDT keys.
 `INT32` values, and 32-bit integers that a transform adds to schemaless records, do not convert
 to `double` or `varint`.

@@ -29,6 +29,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -142,6 +143,94 @@ public class RecordToBoundStatementConverterTest {
 
     DataException e = assertThrows(DataException.class, () -> bind("names", value));
     assertTrue(e.getMessage(), e.getMessage().contains("'names' has more than one key that converts to 1"));
+  }
+
+  @Test
+  public void rejectsDecimalMapKeysThatDifferOnlyInScale() {
+    column(0, "prices", DataTypes.mapOf(DataTypes.DECIMAL, DataTypes.TEXT));
+    Map<Object, Object> value = new LinkedHashMap<>();
+    value.put(new BigDecimal("1.0"), "first");
+    value.put(new BigDecimal("1.00"), "second");
+
+    DataException e = assertThrows(DataException.class, () -> bind("prices", value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'prices' has more than one key that converts to 1.00"));
+  }
+
+  @Test
+  public void rejectsTimestampMapKeysThatDifferBelowAMillisecond() {
+    column(0, "seen", DataTypes.mapOf(DataTypes.TIMESTAMP, DataTypes.TEXT));
+    Map<Object, Object> value = new LinkedHashMap<>();
+    value.put(Instant.ofEpochSecond(0, 1), "first");
+    value.put(Instant.ofEpochSecond(0, 2), "second");
+
+    DataException e = assertThrows(DataException.class, () -> bind("seen", value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'seen' has more than one key"));
+  }
+
+  @Test
+  public void rejectsSchemaTimestampMapKeysThatDifferBelowAMillisecond() {
+    column(0, "seen", DataTypes.mapOf(DataTypes.TIMESTAMP, DataTypes.TEXT));
+    java.sql.Timestamp first = new java.sql.Timestamp(0);
+    first.setNanos(1);
+    java.sql.Timestamp second = new java.sql.Timestamp(0);
+    second.setNanos(2);
+    Map<Object, Object> value = new LinkedHashMap<>();
+    value.put(first, "first");
+    value.put(second, "second");
+
+    DataException e = assertThrows(DataException.class,
+        () -> bind("seen", SchemaBuilder.map(Timestamp.SCHEMA, Schema.STRING_SCHEMA).build(), value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'seen' has more than one key"));
+  }
+
+  @Test
+  public void rejectsTimestampSetMapKeysThatDifferBelowAMillisecond() {
+    column(0, "seen", DataTypes.mapOf(DataTypes.frozenSetOf(DataTypes.TIMESTAMP), DataTypes.TEXT));
+    Map<Object, Object> value = new LinkedHashMap<>();
+    // ScyllaDB sorts set elements, so the order of the two elements does not matter either.
+    value.put(Arrays.asList(Instant.ofEpochSecond(0, 1), Instant.ofEpochMilli(1)), "first");
+    value.put(Arrays.asList(Instant.ofEpochMilli(1), Instant.ofEpochSecond(0, 2)), "second");
+
+    DataException e = assertThrows(DataException.class, () -> bind("seen", value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'seen' has more than one key"));
+  }
+
+  @Test
+  public void rejectsDecimalMapMapKeysThatDifferOnlyInScale() {
+    column(0, "prices", DataTypes.mapOf(DataTypes.frozenMapOf(DataTypes.DECIMAL, DataTypes.TEXT), DataTypes.TEXT));
+    Map<Object, Object> value = new LinkedHashMap<>();
+    value.put(Collections.singletonMap(new BigDecimal("1.0"), "a"), "first");
+    value.put(Collections.singletonMap(new BigDecimal("1.00"), "a"), "second");
+
+    DataException e = assertThrows(DataException.class, () -> bind("prices", value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'prices' has more than one key"));
+  }
+
+  @Test
+  public void rejectsDecimalListMapKeysThatDifferOnlyInScale() {
+    column(0, "prices", DataTypes.mapOf(DataTypes.frozenListOf(DataTypes.DECIMAL), DataTypes.TEXT));
+    Map<Object, Object> value = new LinkedHashMap<>();
+    value.put(Collections.singletonList(new BigDecimal("1.0")), "first");
+    value.put(Collections.singletonList(new BigDecimal("1.00")), "second");
+
+    DataException e = assertThrows(DataException.class, () -> bind("prices", value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'prices' has more than one key that converts to [1.00]"));
+  }
+
+  @Test
+  public void rejectsUdtMapKeysWhoseDecimalsDifferOnlyInScale() {
+    UserDefinedType price = new UserDefinedTypeBuilder(
+        CqlIdentifier.fromInternal("ks"), CqlIdentifier.fromInternal("price"))
+        .withField(CqlIdentifier.fromInternal("amount"), DataTypes.DECIMAL)
+        .frozen()
+        .build();
+    column(0, "labels", DataTypes.mapOf(price, DataTypes.TEXT));
+    Map<Object, Object> value = new LinkedHashMap<>();
+    value.put(Collections.singletonMap("amount", new BigDecimal("1.0")), "first");
+    value.put(Collections.singletonMap("amount", new BigDecimal("1.00")), "second");
+
+    DataException e = assertThrows(DataException.class, () -> bind("labels", value));
+    assertTrue(e.getMessage(), e.getMessage().contains("'labels' has more than one key"));
   }
 
   @Test
