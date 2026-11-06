@@ -155,7 +155,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
 
     if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
       if (topicConfigs.getTablePartitionKeyMap().keySet().size() != tableMetadata.primaryKey().size()) {
-        throw new DataException(
+        throw new TableConfigurationException(
                 String.format(
                         "Cannot alter primary key of a ScyllaDb Table. Existing primary key: '%s', "
                                 + "Primary key mapped in 'topic.my_topic.my_ks.my_table.mapping' config: '%s",
@@ -207,7 +207,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
                 .map(e -> alterTable.addColumn(e.getKey(), e.getValue()).asCql())
                 .collect(Collectors.toList());
 
-        throw new DataException(
+        throw new TableConfigurationException(
                 String.format(
                         "Alter statement(s) needed. Missing column(s): '%s'\n%s;",
                         Joiner.on("', '").join(addedColumns.keySet()),
@@ -385,7 +385,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       log.info("create() - Adding table {}.{}\n{}", key.keyspace, tableName, Arrays.toString(createWithOptions.getOptions().entrySet().toArray()));
       session.executeStatement(createWithOptions.build());
     } else {
-      throw new DataException(
+      throw new TableConfigurationException(
               String.format("Create statement needed:\n%s", create)
       );
     }

@@ -76,6 +76,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final String timestampUnit;
   /** Write timestamp source for topics without per-topic overrides; null for the Kafka record timestamp. */
   public final WriteTimestamp writeTimestamp;
+  public final int maxRetries;
+  public final long retryBackoffMs;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
           Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled|timestampField|timestampUnit)$");
@@ -132,6 +134,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.timestampField = getString(TIMESTAMP_FIELD_CONFIG);
     this.timestampUnit = getString(TIMESTAMP_UNIT_CONFIG);
     this.writeTimestamp = Strings.isNullOrEmpty(timestampField) ? null : WriteTimestamp.of(timestampField, timestampUnit);
+    this.maxRetries = getInt(MAX_RETRIES_CONFIG);
+    this.retryBackoffMs = getLong(RETRY_BACKOFF_MS_CONFIG);
 
     final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
     this.listedTopics = topics == null ? Collections.emptySet()
@@ -142,6 +146,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     // Keyed by the topic name exactly as it appears in SinkRecord.topic().
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
     Map<String, String[]> topicTargets = new HashMap<>();
+    // The consistencyLevel setting of each topic, as written, to name it in validation errors.
+    Map<String, String> consistencyLevelSettings = new HashMap<>();
     for (final Map.Entry<String, String> entry : ((Map<String, String>) originals).entrySet()) {
       final String name2 = entry.getKey();
       if (name2.startsWith("topic.") && hasTopicWiseConfigSuffix(name2)) {
@@ -159,11 +165,18 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
         checkTimestampSetting(name2, m.group(4), entry.getValue());
         topicMap.put(m.group(4), entry.getValue());
+        if ("consistencyLevel".equals(m.group(4))) {
+          consistencyLevelSettings.put(topicName, name2);
+        }
       }
     }
     topicWiseConfigs = new HashMap<>();
     for (Map.Entry<String, Map<String, String>> topicWiseConfig : topicWiseConfigsMap.entrySet()) {
       final String[] target = topicTargets.get(topicWiseConfig.getKey());
+      final String consistencyLevelSetting = consistencyLevelSettings.get(topicWiseConfig.getKey());
+      if (consistencyLevelSetting != null) {
+        ensureNotSerial(consistencyLevelSetting, topicWiseConfig.getValue().get("consistencyLevel"));
+      }
       TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this);
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
@@ -194,7 +207,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "to use when writing to ScyllaDB. The Consistency Level (CL) determines how "
           + "many replicas in a cluster that must acknowledge read or write operations "
           + "before it is considered successful. Valid values are ANY, ONE, TWO, THREE, "
-          + "QUORUM, ALL, LOCAL_QUORUM, EACH_QUORUM, SERIAL, LOCAL_SERIAL, LOCAL_ONE.";
+          + "QUORUM, ALL, LOCAL_QUORUM, EACH_QUORUM, LOCAL_ONE. SERIAL and LOCAL_SERIAL apply only to "
+          + "conditional updates, which the connector does not write.";
 
   public static final String SSL_ENABLED_CONFIG = "scylladb.ssl.enabled";
   private static final String SSL_ENABLED_DOC = "Flag to determine if SSL is enabled when connecting to ScyllaDB.";
@@ -292,18 +306,33 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String BEHAVIOR_ON_ERROR_CONFIG = "behavior.on.error";
   public static final String BEHAVIOR_ON_ERROR_DEFAULT = BehaviorOnError.FAIL.name();
   private static final String BEHAVIOR_ON_ERROR_DISPLAY = "Behavior On Error";
-  private static final String BEHAVIOR_ON_ERROR_DOC = "Error handling behavior setting. "
+  private static final String BEHAVIOR_ON_ERROR_DOC = "How a record error, a record that ScyllaDB "
+          + "rejects or that cannot be converted, is handled. Transient errors are retried and fatal "
+          + "errors fail the task whatever this setting is. "
           + "Must be configured to one of the following:\n"
           + "``fail``\n"
-          + "The Connector throws ConnectException and stops processing records "
-          + "when an error occurs while processing or inserting records into ScyllaDB.\n"
+          + "The task fails with ConnectException at the first record error. Records after one that "
+          + "cannot be converted are not written, but records after one ScyllaDB rejects may be, as "
+          + "writes run concurrently. No offsets are committed, so the batch is redelivered.\n"
           + "``ignore``\n"
-          + "Continues to process next set of records "
-          + "when error occurs while processing or inserting records into ScyllaDB.\n"
+          + "The record is skipped.\n"
           + "``log``\n"
-          + "Logs the error via connect-reporter when an error occurs while processing or "
-          + "inserting records into ScyllaDB and continues to process next set of records, "
-          + "available in the kafka topics.";
+          + "The error is logged and the record is skipped.\n"
+          + "When the Connect worker provides an errant record reporter "
+          + "(``errors.deadletterqueue.topic.name`` or ``errors.log.enable`` is set), failed records "
+          + "are reported to it instead, ``errors.tolerance`` applies, and this setting is not used.";
+
+  public static final String MAX_RETRIES_CONFIG = "scylladb.max.retries";
+  public static final int MAX_RETRIES_DEFAULT = -1;
+  private static final String MAX_RETRIES_DOC = "The number of times a batch is retried after "
+          + "consecutive transient write failures, such as ScyllaDB being unreachable or a timeout, "
+          + "before the task fails. 0 fails the task on the first one; -1 retries without limit.";
+
+  public static final String RETRY_BACKOFF_MS_CONFIG = "scylladb.retry.backoff.ms";
+  public static final long RETRY_BACKOFF_MS_DEFAULT = 3000L;
+  private static final String RETRY_BACKOFF_MS_DOC = "The time to wait before retrying a batch after "
+          + "a transient write failure. The worker never waits past its next offset commit "
+          + "(``offset.flush.interval.ms``).";
 
   public static final String TIMESTAMP_FIELD_CONFIG = "scylladb.timestamp.field";
   private static final String TIMESTAMP_FIELD_DOC = "Record field to take the write timestamp "
@@ -486,14 +515,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     CONSISTENCY_LEVEL_CONFIG,
                     ConfigDef.Type.STRING,
                     ConsistencyLevel.LOCAL_QUORUM.toString(),
-                    ValidEnum.of(DefaultConsistencyLevel.class),
+                    ConfigDef.CompositeValidator.of(
+                            ValidEnum.of(DefaultConsistencyLevel.class),
+                            ScyllaDbSinkConnectorConfig::ensureNotSerial),
                     ConfigDef.Importance.HIGH,
                     CONSISTENCY_LEVEL_DOC,
                     WRITE_GROUP,
                     0,
                     ConfigDef.Width.SHORT,
                     "Consistency Level",
-                    new ListRecommender(Arrays.asList(DefaultConsistencyLevel.values())))
+                    new ListRecommender(Arrays.stream(DefaultConsistencyLevel.values())
+                            .filter(level -> !level.isSerial()).collect(Collectors.toList())))
             .define(
                     DELETES_ENABLE_CONFIG,
                     ConfigDef.Type.BOOLEAN,
@@ -591,6 +623,28 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.SHORT,
                     "Time to live (in seconds)")
             .define(
+                    MAX_RETRIES_CONFIG,
+                    ConfigDef.Type.INT,
+                    MAX_RETRIES_DEFAULT,
+                    ConfigDef.Range.atLeast(-1),
+                    ConfigDef.Importance.MEDIUM,
+                    MAX_RETRIES_DOC,
+                    WRITE_GROUP,
+                    7,
+                    ConfigDef.Width.SHORT,
+                    "Max retries")
+            .define(
+                    RETRY_BACKOFF_MS_CONFIG,
+                    ConfigDef.Type.LONG,
+                    RETRY_BACKOFF_MS_DEFAULT,
+                    ConfigDef.Range.atLeast(1),
+                    ConfigDef.Importance.LOW,
+                    RETRY_BACKOFF_MS_DOC,
+                    WRITE_GROUP,
+                    8,
+                    ConfigDef.Width.SHORT,
+                    "Retry backoff (in ms)")
+            .define(
                     ENABLE_OFFSET_STORAGE_TABLE,
                     ConfigDef.Type.BOOLEAN,
                     ENABLE_OFFSET_STORAGE_TABLE_DEFAULT,
@@ -645,6 +699,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.SHORT,
                     "Write timestamp unit",
                     new ListRecommender(new ArrayList<>(WriteTimestamp.UNITS)));
+  }
+
+  // ScyllaDB accepts SERIAL and LOCAL_SERIAL only for conditional updates, and rejects every write with them.
+  private static void ensureNotSerial(String name, Object value) {
+    if (value != null && (DefaultConsistencyLevel.SERIAL.name().equalsIgnoreCase(value.toString())
+            || DefaultConsistencyLevel.LOCAL_SERIAL.name().equalsIgnoreCase(value.toString()))) {
+      throw new ConfigException(name, value,
+              "SERIAL and LOCAL_SERIAL apply only to conditional updates, which the connector does not write.");
+    }
   }
 
   private Matcher matchTopicSetting(final String name) {

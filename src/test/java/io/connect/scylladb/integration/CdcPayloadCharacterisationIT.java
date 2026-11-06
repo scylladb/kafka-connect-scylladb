@@ -11,7 +11,6 @@ import io.confluent.common.utils.IntegrationTest;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
 import io.connect.scylladb.ScyllaDbSinkTask;
 import org.apache.kafka.common.record.TimestampType;
-import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.apache.kafka.connect.transforms.Flatten;
@@ -162,14 +161,14 @@ public class CdcPayloadCharacterisationIT {
   // --- flat-json flattened with the stock Flatten transform ---
 
   @Test
-  public void missingTableFailsNamingTheTable() {
+  public void missingTableFailsTheTask() {
     // Schemaless records create no table. Before #281 a missing one dereferenced null metadata
-    // (#26); since its merge the sink reports the table in a DataException. #284 flips this again:
-    // the failure becomes fatal and the chain carries TableConfigurationException instead.
-    Throwable error = put("FAIL", flattened(CdcFixtures.FLAT_JSON, "01-create", "cdc_missing"));
+    // (#26); #281 named the table, and #284 makes the failure fatal: it fails the task even when
+    // record errors are ignored.
+    Throwable error = put("IGNORE", flattened(CdcFixtures.FLAT_JSON, "01-create", "cdc_missing"));
     assertNotNull(error);
     String causes = causes(error);
-    assertTrue(causes.contains("DataException"), causes);
+    assertTrue(causes.contains("TableConfigurationException"), causes);
     assertTrue(causes.contains("Table 'cdc_characterisation.cdc_missing' does not exist"), causes);
   }
 
@@ -222,15 +221,13 @@ public class CdcPayloadCharacterisationIT {
   }
 
   @Test
-  public void missingUserKeyFailsTheBatchAsRetriable() {
-    // Without a stored user key the primary key is unset; the server rejects the write and the task
-    // reports a retriable error, so the batch is redelivered indefinitely. #284 flips this: a
-    // rejected write becomes a record error. A per-topic mapping can already bind the key from
-    // another field (`digest=key.digest`); by default the row key is the stored user key.
-    Throwable error = putFlattened("08-key-not-stored");
-    assertTrue(error instanceof RetriableException, causes(error));
-    // The server's rejection, not a timeout or an outage.
-    assertTrue(causes(error).contains("InvalidQueryException"), causes(error));
+  public void missingUserKeyIsARecordError() {
+    // Without a stored user key the primary key is unset and the server rejects the write. Before
+    // #284 that was retriable, so the batch was redelivered indefinitely; now it is a record error,
+    // so ignoring record errors skips it, where a transient or fatal error would still throw. A
+    // per-topic mapping can bind the key from another field (`digest=key.digest`); by default the
+    // row key is the stored user key.
+    assertNull(put("IGNORE", flattened(CdcFixtures.FLAT_JSON, "08-key-not-stored", TABLE)));
     assertEquals(0, rowCount());
   }
 

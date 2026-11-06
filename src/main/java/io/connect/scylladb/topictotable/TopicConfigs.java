@@ -96,7 +96,11 @@ public class TopicConfigs {
     } catch (IllegalArgumentException e) {
       throw  new DataException(
               String.format("%s is not a valid value for consistencyLevel. Valid values are %s",
-                      configsMapForTheTopic.get("consistencyLevel"), Arrays.toString(DefaultConsistencyLevel.values()))
+                      configsMapForTheTopic.get("consistencyLevel"),
+                      Arrays.stream(DefaultConsistencyLevel.values())
+                              .filter(level -> level != DefaultConsistencyLevel.SERIAL
+                                      && level != DefaultConsistencyLevel.LOCAL_SERIAL)
+                              .collect(Collectors.toList()))
       );
     }
   }

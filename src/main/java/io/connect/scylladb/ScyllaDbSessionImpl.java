@@ -20,7 +20,6 @@ import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
-import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -113,7 +112,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
   private TableMetadata.Table existingTableMetadata(String keyspace, String tableName) {
     final TableMetadata.Table result = tableMetadata(keyspace, tableName);
     if (null == result) {
-      throw new DataException(String.format(
+      throw new TableConfigurationException(String.format(
           "Table '%s.%s' does not exist. The connector creates tables only from records with a schema, "
               + "so create it before writing records without one, and check that it was not dropped.",
           keyspace, tableName));
