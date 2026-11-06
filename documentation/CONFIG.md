@@ -459,3 +459,35 @@ The name of the topics to consume data from and write to ScyllaDB.
 * Type: list
 * Default: localhost:9092
 * Importance: high
+
+### Schemaless value types
+
+JSON without a schema carries no column types, so each value is converted to the type of the
+column it is written to. A value with no conversion to that type fails the record, which is then
+handled by ``behavior.on.error``. The table must already exist.
+
+| JSON value | CQL column types |
+|---|---|
+| string | `text`, `ascii`, `uuid`, `timeuuid`, `inet` (single-quoted, as `'127.0.0.1'`), `varint`, `duration`, `tinyint`, `smallint`, `int`, `bigint`, `timestamp` (ISO-8601 instant, as `2024-01-01T00:00:00Z`), `blob` (base64) |
+| integer | `bigint`, `int`, `varint`, `decimal`, `double`; a value outside an `int` column's range, or one a `double` cannot hold exactly, fails the record. `JsonConverter` reads integers as 64-bit values and wraps larger ones before the connector sees them, so those are stored wrong, even in `varint` and `decimal` |
+| decimal number | `double`, `decimal` |
+| boolean | `boolean` |
+| array | `list<T>`, `set<T>`; elements converted to `T` by the same rules, or `text` (as JSON) |
+| object | `map<K, V>`; keys and values converted by the same rules, and keys that convert to the same value fail the record |
+| object | a user-defined type, matching fields by exact name, then ignoring case (the first declared, when fields differ only in case); two keys for one field fail the record. Or `text` (as JSON) |
+| null | any type except inside a list, set or map; the column or UDT field is set to null |
+
+Collections nest: a `list<frozen<my_type>>` column takes an array of objects. In records with a
+schema, `INT64` fields also convert to `double`, and base64 `STRING` fields to `blob`. An `INT64`
+field written to an `int` column fails the record when its value is outside the `int` range.
+In records with a schema, arrays and maps of `Timestamp`, `Date` and `Time` convert only to
+`timestamp`, `date` and `time`, or to `text` as JSON (values in epoch milliseconds, map keys in
+ISO-8601). A `java.util.Date` without a schema, such as one a transform adds, binds only to a
+`timestamp` column; inside collections and UDTs it converts to `timestamp`, `date` or `time`;
+a `date` keeps only the UTC day, and a `time` takes only a value within the first day, as a Connect
+`Time` holds.
+Map keys that ScyllaDB would store as one fail the record: decimals that differ only in scale,
+such as `1.0` and `1.00`, and timestamps that differ below a millisecond, also inside frozen
+collection and UDT keys.
+`INT32` values, and 32-bit integers that a transform adds to schemaless records, do not convert
+to `double` or `varint`.
