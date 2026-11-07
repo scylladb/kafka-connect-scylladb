@@ -90,13 +90,19 @@ public class ScyllaDbSinkTaskHelper {
     final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
     final String keyspace;
     final String tableName;
+    final DeleteFlag deleteFlag = topicConfigs != null
+            ? topicConfigs.getDeleteFlag() : scyllaDbSinkConnectorConfig.deleteFlag;
+    // Sources that send deletes as records with a payload flag them in a field.
+    final boolean delete = null == record.value() || deleteFlag != null && deleteFlag.matches(record);
     if (topicConfigs != null) {
       keyspace = topicConfigs.getKeyspace();
       tableName = topicConfigs.getTable();
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
-        topicConfigs.setTablePartitionAndColumnValues(record);
+        topicConfigs.setTablePartitionAndColumnValues(record, delete);
       }
-      topicConfigs.setTtlIfAvailable(record);
+      if (!delete) {
+        topicConfigs.setTtlIfAvailable(record);
+      }
     } else {
       keyspace = scyllaDbSinkConnectorConfig.keyspace;
       tableName = sanitizedTableName(record.topic());
@@ -105,7 +111,7 @@ public class ScyllaDbSinkTaskHelper {
     final WriteTimestamp writeTimestamp = topicConfigs != null
             ? topicConfigs.getWriteTimestamp() : scyllaDbSinkConnectorConfig.writeTimestamp;
     final Long fieldTimestamp = writeTimestamp != null ? writeTimestamp.micros(record) : null;
-    if (null == record.value()) {
+    if (delete) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
       if (deletionEnabled) {
@@ -128,7 +134,7 @@ public class ScyllaDbSinkTaskHelper {
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                String.format("Record with null value or flagged as a delete found for the key '%s'. If you are trying to delete the record set "
                                 + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
                                 + "your connector configuration.",
                         record.key()));
