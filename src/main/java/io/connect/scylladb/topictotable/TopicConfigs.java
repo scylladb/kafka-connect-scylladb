@@ -5,8 +5,11 @@ import com.datastax.oss.driver.api.core.CqlIdentifier;
 import com.datastax.oss.driver.api.core.DefaultConsistencyLevel;
 import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
+import io.connect.scylladb.DeleteFlag;
+import io.connect.scylladb.RecordExpiry;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
 import io.connect.scylladb.WriteTimestamp;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -20,14 +23,19 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 public class TopicConfigs {
 
   private static final Logger log = LoggerFactory.getLogger(TopicConfigs.class);
+  private static final String EXPIRATION_MAPPING =
+          "__expiration must map a value field, as in __expiration=value.<field>, with nested fields separated by dots.";
   private final String keyspace;
   private final String table;
   private String mappingStringForTopic;
@@ -37,13 +45,24 @@ public class TopicConfigs {
   private ConsistencyLevel consistencyLevel = null;
   private String ttlMappedField;
   private Integer ttl;
+  private final RecordExpiry expiry;
   private String timeStampMappedField;
   private final WriteTimestamp writeTimestamp;
+  private final DeleteFlag deleteFlag;
   private boolean deletesEnabled;
   private boolean isScyllaColumnsMapped;
 
   public TopicConfigs(String keyspace, String table, Map<String, String> configsMapForTheTopic,
                       ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig) {
+    this(keyspace, table, configsMapForTheTopic, scyllaDbSinkConnectorConfig, "");
+  }
+
+  /**
+   * @param settingPrefix the prefix of the topic's settings, as in <code>topic.my_topic.ks.table.</code>,
+   * that errors name them with
+   */
+  public TopicConfigs(String keyspace, String table, Map<String, String> configsMapForTheTopic,
+                      ScyllaDbSinkConnectorConfig scyllaDbSinkConnectorConfig, String settingPrefix) {
     this.keyspace = keyspace;
     this.table = table;
     this.tablePartitionKeyMap = new HashMap<>();
@@ -59,16 +78,37 @@ public class TopicConfigs {
     // Per-topic values keep their spaces, so a blank one turns the field off as an empty one does.
     this.writeTimestamp = timestampField == null || timestampField.trim().isEmpty()
             ? null : WriteTimestamp.of(timestampField, timestampUnit);
+    // Likewise, a per-topic delete field or value list overrides only its own counterpart.
+    final String deletesField = configsMapForTheTopic.getOrDefault(
+            "deletesField", scyllaDbSinkConnectorConfig.deletesField);
+    final List<String> deletesValues = configsMapForTheTopic.containsKey("deletesValues")
+            ? Arrays.asList(configsMapForTheTopic.get("deletesValues").split(","))
+            : scyllaDbSinkConnectorConfig.deletesValues;
+    this.deleteFlag = deletesField == null || deletesField.trim().isEmpty()
+            ? null : DeleteFlag.of(deletesField, deletesValues);
+    String expirationField = null;
+    boolean ttlMapped = false;
     if (configsMapForTheTopic.containsKey("mapping")) {
       this.mappingStringForTopic = configsMapForTheTopic.get("mapping");
       for (String mappedEntry : this.mappingStringForTopic.split(",")) {
         String[] columnNameMap = mappedEntry.split("=");
         String column = columnNameMap[0].trim();
-        if (columnNameMap.length == 2 && columnNameMap[1].startsWith("value.")
-            && !column.equals("__ttl") && !column.equals("__timestamp")) {
-          this.valueFieldColumns.put(columnNameMap[1].substring("value.".length()), column);
+        String recordField = columnNameMap.length == 2 ? columnNameMap[1].trim() : "";
+        ttlMapped |= column.equals("__ttl");
+        if (column.equals("__expiration")) {
+          if (!recordField.startsWith("value.")) {
+            // Named in full, as checkSetting names the other settings.
+            throw new ConfigException(settingPrefix + "mapping", this.mappingStringForTopic, EXPIRATION_MAPPING);
+          }
+          expirationField = recordField;
+        } else if (recordField.startsWith("value.") && !column.equals("__ttl") && !column.equals("__timestamp")) {
+          this.valueFieldColumns.put(recordField.substring("value.".length()), column);
         }
       }
+    }
+    if (ttlMapped && expirationField != null) {
+      throw new ConfigException(settingPrefix + "mapping", this.mappingStringForTopic,
+          "A mapping cannot contain both __ttl and __expiration.");
     }
     if (configsMapForTheTopic.containsKey("deletesEnabled")) {
       String deleteEnabledValue = configsMapForTheTopic.get("deletesEnabled");
@@ -86,6 +126,30 @@ public class TopicConfigs {
       if (configsMapForTheTopic.containsKey("ttlSeconds")) {
         this.ttl = Integer.parseInt(configsMapForTheTopic.get("ttlSeconds"));
       }
+      final String expirationUnit = configsMapForTheTopic.get("expirationUnit");
+      // Checked even when no field uses them, so a typo is not silently ignored.
+      if (expirationUnit != null) {
+        checkSetting(settingPrefix, "expirationUnit", expirationUnit, RecordExpiry::parseUnit);
+      } else if (expirationField != null) {
+        // No default: integers read in the wrong unit would all be skipped as expired, or fail.
+        throw new ConfigException(String.format(
+                "The setting %sexpirationUnit must be one of %s when the mapping contains __expiration.",
+                settingPrefix, RecordExpiry.UNITS));
+      }
+      final int expirationOffsetSeconds = checkSetting(settingPrefix, "expirationOffsetSeconds",
+              configsMapForTheTopic.getOrDefault("expirationOffsetSeconds", "0"), RecordExpiry::parseOffsetSeconds);
+      final boolean skipExpired = checkSetting(settingPrefix, "skipExpired",
+              configsMapForTheTopic.getOrDefault("skipExpired", "true"), RecordExpiry::parseSkipExpired);
+      RecordExpiry recordExpiry = null;
+      if (expirationField != null) {
+        try {
+          recordExpiry = RecordExpiry.of(expirationField, expirationUnit, expirationOffsetSeconds, skipExpired);
+        } catch (ConfigException e) {
+          // A malformed path, as in value.a..b; the unit and offset are already checked.
+          throw new ConfigException(settingPrefix + "mapping", this.mappingStringForTopic, EXPIRATION_MAPPING);
+        }
+      }
+      this.expiry = recordExpiry;
       if (configsMapForTheTopic.containsKey("consistencyLevel")) {
         this.consistencyLevel = DefaultConsistencyLevel.valueOf(configsMapForTheTopic.get("consistencyLevel"));
       }
@@ -105,38 +169,65 @@ public class TopicConfigs {
     }
   }
 
+  // Reports an invalid setting under its full name, as in topic.my_topic.ks.table.expirationUnit.
+  private static <T> T checkSetting(String prefix, String name, String value, Function<String, T> parse) {
+    try {
+      return parse.apply(value);
+    } catch (ConfigException e) {
+      throw new ConfigException(prefix + name, value, e.getMessage());
+    }
+  }
+
   public void setTablePartitionAndColumnValues(SinkRecord record) {
-    // A tombstone has no value schema to resolve value fields against, so it maps only the key,
-    // and the first record with a value completes the mapping.
-    final boolean tombstone = record.value() == null;
+    setTablePartitionAndColumnValues(record, record.value() == null);
+  }
+
+  /**
+   * @param delete whether the record is a delete: a tombstone, or a record flagged as a delete
+   */
+  public void setTablePartitionAndColumnValues(SinkRecord record, boolean delete) {
+    // A delete binds only the key: a tombstone has no value schema to resolve value fields against,
+    // and a flagged delete's value need not carry the written fields. The first write completes
+    // the mapping.
     for (String mappedEntry : this.mappingStringForTopic.split(",")) {
-      String[] columnNameMap = mappedEntry.split("=");
-      if (tombstone && !columnNameMap[1].startsWith("key.")) {
+      String[] columnNameMap = mappedEntry.trim().split("=", 2);
+      if (columnNameMap.length != 2) {
+        throw new DataException("Each mapping entry must have the form column=key.field, column=value.field or column=header.field.");
+      }
+      String recordFieldMapping = columnNameMap[1].trim();
+      String[] recordFieldParts = recordFieldMapping.split("\\.", 2);
+      String recordField = recordFieldParts.length == 2 ? recordFieldParts[1] : "";
+      String scyllaColumnName = columnNameMap[0].trim();
+      if (delete && !recordFieldMapping.startsWith("key.")) {
+        // The deprecated __timestamp mapping stamps deletes too, and needs no value schema.
+        if (scyllaColumnName.equals("__timestamp") && recordFieldMapping.startsWith("value.")) {
+          timeStampMappedField = recordField;
+        }
         continue;
       }
-      String recordField = columnNameMap[1].split("\\.").length > 0
-              ? columnNameMap[1].split("\\.")[1] : "";
-      String scyllaColumnName = columnNameMap[0].trim();
       KafkaScyllaColumnMapper kafkaScyllaColumnMapper = new KafkaScyllaColumnMapper(scyllaColumnName);
-      if (columnNameMap[1].startsWith("key.")) {
+      if (recordFieldMapping.startsWith("key.")) {
         if (record.keySchema() != null) {
           kafkaScyllaColumnMapper.kafkaRecordField = getFiledForNameFromSchema(record.keySchema(), recordField, "record.keySchema()");
         }
         this.tablePartitionKeyMap.put(recordField, kafkaScyllaColumnMapper);
-      } else if (columnNameMap[1].startsWith("value.")) {
+      } else if (recordFieldMapping.startsWith("value.")) {
         Field valueField = null;
-        if (record.valueSchema() != null) {
+        // The expiry is read by the RecordExpiry built from the mapping, and need not be in the schema.
+        if (record.valueSchema() != null && !scyllaColumnName.equals("__expiration")) {
           valueField = getFiledForNameFromSchema(record.valueSchema(), recordField, "record.valueSchema()");
         }
         if (scyllaColumnName.equals("__ttl")) {
           ttlMappedField = recordField;
+        } else if (scyllaColumnName.equals("__expiration")) {
+          continue;
         } else if (scyllaColumnName.equals("__timestamp")) {
           timeStampMappedField = recordField;
         } else {
           kafkaScyllaColumnMapper.kafkaRecordField = valueField;
           this.tableColumnMap.put(recordField, kafkaScyllaColumnMapper);
         }
-      } else if (columnNameMap[1].startsWith("header.")) {
+      } else if (recordFieldMapping.startsWith("header.")) {
         int index = 0;
         for (Header header : record.headers()) {
           if (header.key().equals(recordField)) {
@@ -154,7 +245,7 @@ public class TopicConfigs {
         throw new IllegalArgumentException("field name must start with 'key.', 'value.' or 'header.'.");
       }
     }
-    this.isScyllaColumnsMapped = !tombstone;
+    this.isScyllaColumnsMapped = !delete;
   }
 
   private Field getFiledForNameFromSchema(Schema schema, String name, String schemaType) {
@@ -177,10 +268,19 @@ public class TopicConfigs {
     return schemaField;
   }
 
-  public void setTtlIfAvailable(SinkRecord record) {
+  /**
+   * Sets the TTL of the record from its mapped TTL or expiry field, if any.
+   *
+   * @return false when the record has already expired and is to be skipped.
+   */
+  public boolean setTtlIfAvailable(SinkRecord record) {
+    return setTtlIfAvailable(record, System.currentTimeMillis());
+  }
+
+  boolean setTtlIfAvailable(SinkRecord record, long currentTimeMillis) {
     // Tombstones carry no value, so value-mapped fields cannot apply to them.
     if (record.value() == null) {
-      return;
+      return true;
     }
     if (ttlMappedField != null) {
       Object ttlValue = getValueOfField(record.value(), ttlMappedField);
@@ -192,7 +292,14 @@ public class TopicConfigs {
                         ttlMappedField, ttlValue.getClass().getName()
                 ));
       }
+    } else if (expiry != null) {
+      final OptionalInt ttlSeconds = expiry.ttlSeconds(record, currentTimeMillis);
+      if (!ttlSeconds.isPresent()) {
+        return false;
+      }
+      this.ttl = ttlSeconds.getAsInt();
     }
+    return true;
   }
 
   public Object getValueOfField(Object value, String field) {
@@ -307,6 +414,13 @@ public class TopicConfigs {
       return WriteTimestamp.legacyMapping(timeStampMappedField);
     }
     return writeTimestamp;
+  }
+
+  /**
+   * @return what marks a record with a value as a delete, or null when only tombstones are deletes.
+   */
+  public DeleteFlag getDeleteFlag() {
+    return deleteFlag;
   }
 
   public boolean isScyllaColumnsMapped() {

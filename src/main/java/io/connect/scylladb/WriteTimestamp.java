@@ -1,12 +1,9 @@
 package io.connect.scylladb;
 
 import org.apache.kafka.common.config.ConfigException;
-import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
-import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.data.Timestamp;
 import org.apache.kafka.connect.errors.DataException;
-import org.apache.kafka.connect.header.Header;
 import org.apache.kafka.connect.sink.SinkRecord;
 
 import java.math.BigInteger;
@@ -15,7 +12,6 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -30,18 +26,16 @@ public final class WriteTimestamp {
       TimeUnit.SECONDS.name(), TimeUnit.MILLISECONDS.name(), TimeUnit.MICROSECONDS.name(), TimeUnit.NANOSECONDS.name()
   ));
 
-  private enum Source { KEY, VALUE, HEADER }
+  private static final String LABEL = "Timestamp field";
 
+  private final RecordField recordField;
   private final String field;
-  private final Source source;
-  private final String[] path;
   private final TimeUnit unit;
   private final boolean tombstoneFallback;
 
-  private WriteTimestamp(String field, Source source, String[] path, TimeUnit unit, boolean tombstoneFallback) {
-    this.field = field;
-    this.source = source;
-    this.path = path;
+  private WriteTimestamp(RecordField recordField, TimeUnit unit, boolean tombstoneFallback) {
+    this.recordField = recordField;
+    this.field = recordField.field;
     this.unit = unit;
     this.tombstoneFallback = tombstoneFallback;
   }
@@ -52,23 +46,7 @@ public final class WriteTimestamp {
    * @param unit one of {@link #UNITS}, case-insensitive
    */
   public static WriteTimestamp of(String field, String unit) {
-    field = field.trim();
-    final int dot = field.indexOf('.');
-    final String[] path = dot < 0 ? new String[0] : field.substring(dot + 1).split("\\.", -1);
-    // Header names may themselves hold empty dot segments, as in 'source..lut', and are matched literally.
-    final boolean header = dot >= 0 && "header".equalsIgnoreCase(field.substring(0, dot));
-    if (dot < 0 || (header ? dot == field.length() - 1 : Arrays.stream(path).anyMatch(String::isEmpty))) {
-      throw new ConfigException(String.format(
-          "Timestamp field '%s' must be 'key.<field>', 'value.<field>' or 'header.<name>'.", field));
-    }
-    final Source source;
-    try {
-      source = Source.valueOf(field.substring(0, dot).toUpperCase(Locale.ROOT));
-    } catch (IllegalArgumentException e) {
-      throw new ConfigException(String.format(
-          "Timestamp field '%s' must start with 'key.', 'value.' or 'header.'.", field));
-    }
-    return new WriteTimestamp(field, source, path, parseUnit(unit), false);
+    return new WriteTimestamp(RecordField.parse(field.trim(), LABEL), parseUnit(unit), false);
   }
 
   /**
@@ -76,8 +54,7 @@ public final class WriteTimestamp {
    * fall back to the Kafka record timestamp.
    */
   public static WriteTimestamp legacyMapping(String valueField) {
-    return new WriteTimestamp("value." + valueField, Source.VALUE, new String[] {valueField},
-        TimeUnit.MICROSECONDS, true);
+    return new WriteTimestamp(RecordField.ofValueField(valueField, LABEL), TimeUnit.MICROSECONDS, true);
   }
 
   public static TimeUnit parseUnit(String unit) {
@@ -103,101 +80,68 @@ public final class WriteTimestamp {
    * @throws DataException when the field is missing, null or not a timestamp.
    */
   public long micros(SinkRecord record) {
-    Object current;
-    Schema schema;
-    int start = 0;
-    switch (source) {
-      case KEY:
-        current = record.key();
-        schema = record.keySchema();
-        break;
-      case VALUE:
-        if (record.value() == null) {
-          if (tombstoneFallback) {
-            return kafkaTimestampMicros(record);
-          }
-          throw new DataException(String.format(
-              "Timestamp field '%s' cannot be read from a tombstone in %s: "
-                  + "a tombstone has no value, so deletes need a 'key.' or 'header.' timestamp field.",
-              field, where(record)));
-        }
-        current = record.value();
-        schema = record.valueSchema();
-        break;
-      default:
-        // Header names may contain dots, so the longest name that matches a header wins.
-        Header header = null;
-        for (start = path.length; start > 0 && header == null; start--) {
-          header = record.headers().lastWithName(String.join(".", Arrays.copyOfRange(path, 0, start)));
-        }
-        start++;
-        current = header == null ? null : header.value();
-        schema = header == null ? null : header.schema();
-    }
-    for (int i = start; i < path.length && current != null; i++) {
-      schema = childSchema(current instanceof Struct ? ((Struct) current).schema() : schema, path[i]);
-      current = child(record, current, path[i]);
-    }
-    if (current == null) {
+    if (record.value() == null && recordField.source == RecordField.Source.VALUE) {
+      if (tombstoneFallback) {
+        return kafkaTimestampMicros(record);
+      }
       throw new DataException(String.format(
-          "Timestamp field '%s' is missing or null in a record of %s.", field, where(record)));
+          "Timestamp field '%s' cannot be read from a tombstone in %s: "
+              + "a tombstone has no value, so it needs a 'key.' or 'header.' timestamp field.",
+          field, RecordField.where(record)));
     }
-    return toMicros(record, current, schema);
-  }
-
-  private static Schema childSchema(Schema parent, String name) {
-    if (parent == null) {
-      return null;
+    final RecordField.Resolved resolved = recordField.resolve(record);
+    if (resolved.value == null) {
+      throw new DataException(String.format(
+          "Timestamp field '%s' is missing or null in a record of %s.", field, RecordField.where(record)));
     }
-    if (parent.type() == Schema.Type.STRUCT) {
-      final Field child = parent.field(name);
-      return child == null ? null : child.schema();
-    }
-    return parent.type() == Schema.Type.MAP ? parent.valueSchema() : null;
-  }
-
-  private Object child(SinkRecord record, Object parent, String name) {
-    if (parent instanceof Struct) {
-      final Struct struct = (Struct) parent;
-      final Field child = struct.schema().field(name);
-      return child == null ? null : struct.getWithoutDefault(child.name());
-    }
-    if (parent instanceof Map) {
-      return ((Map<?, ?>) parent).get(name);
-    }
-    throw new DataException(String.format(
-        "Timestamp field '%s' cannot be read in %s: '%s' is inside a %s, not a struct or map.",
-        field, where(record), name, parent.getClass().getName()));
+    return toMicros(record, resolved.value, resolved.schema);
   }
 
   private long toMicros(SinkRecord record, Object value, Schema schema) {
-    if (value instanceof Date) {
-      // Connect's Date and Time logical types are java.util.Date too, but hold no point in time.
-      if (schema != null && !Timestamp.LOGICAL_NAME.equals(schema.name())) {
-        throw new DataException(String.format(
-            "Timestamp field '%s' in %s must be an integer or a %s, but is a %s.",
-            field, where(record), Timestamp.LOGICAL_NAME, schema.name()));
-      }
+    if (isTimestamp(LABEL, field, record, value, schema)) {
       return checked(record, ((Date) value).getTime(), TimeUnit.MILLISECONDS);
     }
-    final long amount;
+    return checked(record, integer(LABEL, field, record, value), unit);
+  }
+
+  /**
+   * Whether a non-null field value is a point in time, a {@link Date} in milliseconds, rather
+   * than an integer. Shared with {@link RecordExpiry}, so both read the same types.
+   * @throws DataException when it is a Kafka Connect Date or Time, which hold no point in time
+   */
+  static boolean isTimestamp(String label, String field, SinkRecord record, Object value, Schema schema) {
+    if (!(value instanceof Date)) {
+      return false;
+    }
+    // Connect's Date and Time logical types are java.util.Date too, but hold no point in time.
+    if (schema != null && !Timestamp.LOGICAL_NAME.equals(schema.name())) {
+      throw new DataException(String.format(
+          "%s '%s' in %s must be an integer or a %s, but is a %s.",
+          label, field, RecordField.where(record), Timestamp.LOGICAL_NAME, schema.name()));
+    }
+    return true;
+  }
+
+  /**
+   * Reads a non-null field value that is not a {@link Date} as an integer, or a string holding one.
+   * @throws DataException when it is neither
+   */
+  static long integer(String label, String field, SinkRecord record, Object value) {
     if (value instanceof Long || value instanceof Integer || value instanceof Short || value instanceof Byte) {
-      amount = ((Number) value).longValue();
+      return ((Number) value).longValue();
     } else if (value instanceof BigInteger && ((BigInteger) value).bitLength() < Long.SIZE) {
-      amount = ((BigInteger) value).longValue();
+      return ((BigInteger) value).longValue();
     } else if (value instanceof String) {
       try {
-        amount = Long.parseLong(((String) value).trim());
+        return Long.parseLong(((String) value).trim());
       } catch (NumberFormatException e) {
         throw new DataException(String.format(
-            "Timestamp field '%s' in %s is not an integer: '%s'.", field, where(record), value));
+            "%s '%s' in %s is not an integer: '%s'.", label, field, RecordField.where(record), value));
       }
-    } else {
-      throw new DataException(String.format(
-          "Timestamp field '%s' in %s must be an integer or a timestamp, but is a %s.",
-          field, where(record), value.getClass().getName()));
     }
-    return checked(record, amount, unit);
+    throw new DataException(String.format(
+        "%s '%s' in %s must be an integer or a timestamp, but is a %s.",
+        label, field, RecordField.where(record), value.getClass().getName()));
   }
 
   private long checked(SinkRecord record, long amount, TimeUnit unit) {
@@ -209,14 +153,8 @@ public final class WriteTimestamp {
         || (micros == Long.MAX_VALUE && unit.compareTo(TimeUnit.MICROSECONDS) > 0)) {
       throw new DataException(String.format(
           "Timestamp field '%s' in %s is out of range in %s: %d.",
-          field, where(record), unit, amount));
+          field, RecordField.where(record), unit, amount));
     }
     return micros;
-  }
-
-  // The task logs only the exception, so each message names the record it rejects.
-  private static String where(SinkRecord record) {
-    return String.format("topic '%s' (partition %d, offset %d)",
-        record.topic(), record.kafkaPartition(), record.kafkaOffset());
   }
 }

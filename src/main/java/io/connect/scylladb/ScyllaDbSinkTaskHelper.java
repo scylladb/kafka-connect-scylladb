@@ -83,20 +83,29 @@ public class ScyllaDbSinkTaskHelper {
 
   /**
    * @return the statement to execute for the record, or <code>null</code> when there is nothing to
-   * execute: a delete from a table that does not exist.
+   * execute: a delete from a table that does not exist, or a record that has already expired and
+   * is to be skipped.
    */
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     BoundStatement boundStatement = null;
     final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
     final String keyspace;
     final String tableName;
+    final DeleteFlag deleteFlag = topicConfigs != null
+            ? topicConfigs.getDeleteFlag() : scyllaDbSinkConnectorConfig.deleteFlag;
+    // Sources that send deletes as records with a payload flag them in a field.
+    final boolean delete = null == record.value() || deleteFlag != null && deleteFlag.matches(record);
     if (topicConfigs != null) {
       keyspace = topicConfigs.getKeyspace();
       tableName = topicConfigs.getTable();
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
-        topicConfigs.setTablePartitionAndColumnValues(record);
+        topicConfigs.setTablePartitionAndColumnValues(record, delete);
       }
-      topicConfigs.setTtlIfAvailable(record);
+      if (!delete && !topicConfigs.setTtlIfAvailable(record)) {
+        log.warn("put() - record of topic '{}' (partition {}, offset {}) has already expired. Skipping it.",
+                record.topic(), record.kafkaPartition(), record.kafkaOffset());
+        return null;
+      }
     } else {
       keyspace = scyllaDbSinkConnectorConfig.keyspace;
       tableName = sanitizedTableName(record.topic());
@@ -105,7 +114,7 @@ public class ScyllaDbSinkTaskHelper {
     final WriteTimestamp writeTimestamp = topicConfigs != null
             ? topicConfigs.getWriteTimestamp() : scyllaDbSinkConnectorConfig.writeTimestamp;
     final Long fieldTimestamp = writeTimestamp != null ? writeTimestamp.micros(record) : null;
-    if (null == record.value()) {
+    if (delete) {
       boolean deletionEnabled = topicConfigs != null
               ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
       if (deletionEnabled) {
@@ -128,7 +137,7 @@ public class ScyllaDbSinkTaskHelper {
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                String.format("Record with null value or flagged as a delete found for the key '%s'. If you are trying to delete the record set "
                                 + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
                                 + "your connector configuration.",
                         record.key()));
@@ -138,6 +147,9 @@ public class ScyllaDbSinkTaskHelper {
       final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(keyspace, tableName, topicConfigs);
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
+      if (topicConfigs != null && topicConfigs.getTtl() != null) {
+        boundStatement = boundStatement.setInt(ScyllaDbConstants.TTL_BIND_MARKER, topicConfigs.getTtl());
+      }
     }
 
     // The Kafka timestamp is read last, as before, so the delete checks above still report first.

@@ -78,11 +78,18 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final WriteTimestamp writeTimestamp;
   public final int maxRetries;
   public final long retryBackoffMs;
+  public final String deletesField;
+  public final List<String> deletesValues;
+  /** Marks records with a value as deletes, for topics without per-topic overrides; null when off. */
+  public final DeleteFlag deleteFlag;
 
   private static final Pattern TOPIC_KS_TABLE_SETTING_PATTERN =
-          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|deletesEnabled|timestampField|timestampUnit)$");
+          Pattern.compile("topic\\.([a-zA-Z0-9._-]+)\\.([^.]+|\"[\"]+\")\\.([^.]+|\"[\"]+\")\\.(mapping|consistencyLevel|ttlSeconds|expirationOffsetSeconds|expirationUnit|skipExpired|deletesEnabled|timestampField|timestampUnit|deletesField|deletesValues)$");
 
-  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {".mapping",".consistencyLevel",".ttlSeconds",".deletesEnabled",".timestampField",".timestampUnit"};
+  private static final String[] TOPIC_WISE_CONFIGS_VALID_SUFFIXES = {
+          ".mapping", ".consistencyLevel", ".ttlSeconds", ".expirationOffsetSeconds", ".expirationUnit",
+          ".skipExpired", ".deletesEnabled", ".timestampField", ".timestampUnit", ".deletesField", ".deletesValues"
+  };
 
   private static final Logger log = LoggerFactory.getLogger(ScyllaDbSinkConnectorConfig.class);
 
@@ -136,6 +143,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.writeTimestamp = Strings.isNullOrEmpty(timestampField) ? null : WriteTimestamp.of(timestampField, timestampUnit);
     this.maxRetries = getInt(MAX_RETRIES_CONFIG);
     this.retryBackoffMs = getLong(RETRY_BACKOFF_MS_CONFIG);
+    this.deletesField = getString(DELETES_FIELD_CONFIG);
+    this.deletesValues = getList(DELETES_VALUES_CONFIG);
+    try {
+      this.deleteFlag = Strings.isNullOrEmpty(deletesField) ? null : DeleteFlag.of(deletesField, deletesValues);
+    } catch (ConfigException e) {
+      throw new ConfigException(DELETES_VALUES_CONFIG, String.join(",", deletesValues), e.getMessage());
+    }
 
     final Object topics = originals.get(SinkTask.TOPICS_CONFIG);
     this.listedTopics = topics == null ? Collections.emptySet()
@@ -145,6 +159,8 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
 
     // Keyed by the topic name exactly as it appears in SinkRecord.topic().
     Map<String, Map<String, String>> topicWiseConfigsMap = new HashMap<>();
+    // The full name of each per-topic setting, by topic and suffix, for error messages.
+    Map<String, Map<String, String>> topicSettingNames = new HashMap<>();
     Map<String, String[]> topicTargets = new HashMap<>();
     // The consistencyLevel setting of each topic, as written, to name it in validation errors.
     Map<String, String> consistencyLevelSettings = new HashMap<>();
@@ -168,16 +184,26 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
         if ("consistencyLevel".equals(m.group(4))) {
           consistencyLevelSettings.put(topicName, name2);
         }
+        topicSettingNames.computeIfAbsent(topicName, t -> new HashMap<>()).put(m.group(4), name2);
       }
+    }
+    // Delete values with no field to test them against would be silently ignored.
+    if (Strings.isNullOrEmpty(deletesField) && !deletesValues.isEmpty() && topicWiseConfigsMap.values().stream()
+            .allMatch(topicSettings -> topicSettings.get("deletesField") == null
+                    || topicSettings.get("deletesField").trim().isEmpty())) {
+      throw new ConfigException(DELETES_VALUES_CONFIG, String.join(",", deletesValues),
+              "No delete field is set: set " + DELETES_FIELD_CONFIG + " or a per-topic deletesField.");
     }
     topicWiseConfigs = new HashMap<>();
     for (Map.Entry<String, Map<String, String>> topicWiseConfig : topicWiseConfigsMap.entrySet()) {
+      checkDeleteSettings(topicWiseConfig.getValue(), topicSettingNames.get(topicWiseConfig.getKey()));
       final String[] target = topicTargets.get(topicWiseConfig.getKey());
       final String consistencyLevelSetting = consistencyLevelSettings.get(topicWiseConfig.getKey());
       if (consistencyLevelSetting != null) {
         ensureNotSerial(consistencyLevelSetting, topicWiseConfig.getValue().get("consistencyLevel"));
       }
-      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this);
+      final String settingPrefix = String.format("topic.%s.%s.%s.", topicWiseConfig.getKey(), target[0], target[1]);
+      TopicConfigs topicConfigs = new TopicConfigs(target[0], target[1], topicWiseConfig.getValue(), this, settingPrefix);
       topicWiseConfigs.put(topicWiseConfig.getKey(), topicConfigs);
     }
   }
@@ -344,6 +370,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   private static final String TIMESTAMP_UNIT_DEFAULT = "MICROSECONDS";
   private static final String TIMESTAMP_UNIT_DOC = "Unit of the integer in scylladb.timestamp.field, one of "
           + String.join(", ", WriteTimestamp.UNITS) + ". Timestamp-typed fields ignore it.";
+
+  public static final String DELETES_FIELD_CONFIG = "scylladb.deletes.field";
+  private static final String DELETES_FIELD_DOC = "Record field that marks a record with a value as a "
+          + "delete, for sources that send deletes as records with a payload rather than as tombstones: "
+          + "'key.<field>', 'value.<field>' or 'header.<name>', with nested fields separated by dots, "
+          + "e.g. 'value.metadata.op'. A record whose field holds one of scylladb.deletes.values deletes "
+          + "its row by primary key, like a tombstone; a missing or null field means a write. "
+          + "Requires scylladb.deletes.enabled. When empty, only tombstones are deletes.";
+  public static final String DELETES_VALUES_CONFIG = "scylladb.deletes.values";
+  private static final String DELETES_VALUES_DOC = "Values of scylladb.deletes.field that mark a delete, "
+          + "compared as strings, e.g. 'delete' or 'true'. Required when scylladb.deletes.field is set.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -698,7 +735,37 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     6,
                     ConfigDef.Width.SHORT,
                     "Write timestamp unit",
-                    new ListRecommender(new ArrayList<>(WriteTimestamp.UNITS)));
+                    new ListRecommender(new ArrayList<>(WriteTimestamp.UNITS)))
+            // Deletes flagged by a field
+            .define(
+                    DELETES_FIELD_CONFIG,
+                    ConfigDef.Type.STRING,
+                    "",
+                    (name, value) -> {
+                      if (!Strings.isNullOrEmpty((String) value)) {
+                        try {
+                          RecordField.parse((String) value, DeleteFlag.LABEL);
+                        } catch (ConfigException e) {
+                          throw new ConfigException(name, value, e.getMessage());
+                        }
+                      }
+                    },
+                    ConfigDef.Importance.MEDIUM,
+                    DELETES_FIELD_DOC,
+                    WRITE_GROUP,
+                    9,
+                    ConfigDef.Width.MEDIUM,
+                    "Delete field")
+            .define(
+                    DELETES_VALUES_CONFIG,
+                    ConfigDef.Type.LIST,
+                    "",
+                    ConfigDef.Importance.MEDIUM,
+                    DELETES_VALUES_DOC,
+                    WRITE_GROUP,
+                    10,
+                    ConfigDef.Width.MEDIUM,
+                    "Delete field values");
   }
 
   // ScyllaDB accepts SERIAL and LOCAL_SERIAL only for conditional updates, and rejects every write with them.
@@ -733,6 +800,34 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
       return name;
     } catch (IllegalArgumentException e) {
       throw new ConfigException(setting, name, "Keyspace and table names must be valid CQL names. " + e.getMessage());
+    }
+  }
+
+  // Reports per-topic delete settings that cannot take effect under their own names.
+  private void checkDeleteSettings(Map<String, String> topicSettings, Map<String, String> settingNames) {
+    final String field = topicSettings.getOrDefault("deletesField", deletesField);
+    final boolean ownValues = topicSettings.containsKey("deletesValues");
+    if (Strings.isNullOrEmpty(field) || field.trim().isEmpty()) {
+      if (ownValues) {
+        throw new ConfigException(settingNames.get("deletesValues"), topicSettings.get("deletesValues"),
+                "No delete field is set for this topic: set its deletesField or " + DELETES_FIELD_CONFIG + ".");
+      }
+      return;
+    }
+    if (topicSettings.containsKey("deletesField")) {
+      try {
+        RecordField.parse(field.trim(), DeleteFlag.LABEL);
+      } catch (ConfigException e) {
+        throw new ConfigException(settingNames.get("deletesField"), field, e.getMessage());
+      }
+    }
+    final List<String> values = ownValues
+            ? Arrays.asList(topicSettings.get("deletesValues").split(",")) : deletesValues;
+    if (values.stream().allMatch(value -> value.trim().isEmpty())) {
+      // With both inherited, the connector-level settings have already been rejected.
+      final String setting = ownValues ? "deletesValues" : "deletesField";
+      throw new ConfigException(settingNames.get(setting), topicSettings.get(setting),
+              "No value marks a delete for this topic: set its deletesValues or " + DELETES_VALUES_CONFIG + ".");
     }
   }
 
