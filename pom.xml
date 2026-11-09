@@ -380,7 +380,7 @@
             <groupId>at.yawk.lz4</groupId>
             <artifactId>lz4-java</artifactId>
             <!-- should match version from drivers POM -->
-            <version>1.13.0</version>
+            <version>1.14.0</version>
         </dependency>
 
         <dependency>
