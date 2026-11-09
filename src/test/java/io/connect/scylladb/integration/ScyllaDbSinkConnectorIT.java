@@ -929,9 +929,6 @@ public class ScyllaDbSinkConnectorIT {
                     )
             )
     );
-    this.validations = records.stream()
-            .map(RowValidator::of)
-            .collect(Collectors.toList());
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
@@ -940,6 +937,11 @@ public class ScyllaDbSinkConnectorIT {
     String query = "select * from " + SCYLLADB_KEYSPACE + ".insertTestingttl";
     List<Row> beforeTTL = executeSelect(query);
     assertEquals(2, beforeTTL.size());
+    try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
+      for (SinkRecord record : records) {
+        assertRow(session, RowValidator.of(record));
+      }
+    }
     /**
      * we are setting the ttl value to 10 second. So we assume data will be deleted after 10 second.
      * Therefore giving a sleep of 12 sec.
@@ -1196,7 +1198,7 @@ public class ScyllaDbSinkConnectorIT {
     log.info("Querying for {}", query);
     ResultSet results = session.execute(query);
     Row row = results.one();
-    if (validation.rowExists && row != null) {
+    if (validation.rowExists) {
       assertNotNull(
               row,
               String.format("Could not find result for query. Query = '%s'", query)
