@@ -937,10 +937,13 @@ public class ScyllaDbSinkConnectorIT {
     String query = "select * from " + SCYLLADB_KEYSPACE + ".insertTestingttl";
     List<Row> beforeTTL = executeSelect(query);
     assertEquals(2, beforeTTL.size());
-    try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
-      for (SinkRecord record : records) {
-        assertRow(session, RowValidator.of(record));
-      }
+    for (SinkRecord record : records) {
+      RowValidator validation = RowValidator.of(record);
+      Row row = beforeTTL.stream()
+              .filter(candidate -> validation.key.get("id").equals(candidate.getObject("id")))
+              .findFirst()
+              .orElse(null);
+      assertRow(row, validation, validation.toString());
     }
     /**
      * we are setting the ttl value to 10 second. So we assume data will be deleted after 10 second.
@@ -1197,7 +1200,10 @@ public class ScyllaDbSinkConnectorIT {
     String query = validation.toString();
     log.info("Querying for {}", query);
     ResultSet results = session.execute(query);
-    Row row = results.one();
+    assertRow(results.one(), validation, query);
+  }
+
+  private void assertRow(Row row, RowValidator validation, String query) {
     if (validation.rowExists) {
       assertNotNull(
               row,
