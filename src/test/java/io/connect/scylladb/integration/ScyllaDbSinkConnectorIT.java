@@ -130,22 +130,45 @@ public class ScyllaDbSinkConnectorIT {
     this.validations = new ArrayList<>();
   }
 
+  /** Validates expected rows before dropping the offset table and stopping the task and connector. */
   @AfterEach
   public void stop() {
-    if (!this.validations.isEmpty()) {
-      try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
-        for (RowValidator validation : validations) {
-          assertRow(session, validation);
+    try {
+      if (!this.validations.isEmpty()) {
+        try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
+          for (RowValidator validation : validations) {
+            assertRow(session, validation);
+          }
         }
       }
+    } finally {
+      try {
+        String query = "DROP TABLE" + " " + SCYLLADB_OFFSET_TABLE;
+        if (IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE)) {
+          execute(query);
+        }
+      } finally {
+        this.task.stop();
+        if (this.connector != null) {
+          this.connector.stop();
+        }
+      }
+    }
+  }
 
-    }
-    String query = "DROP TABLE" + " " + SCYLLADB_OFFSET_TABLE;
-    if (IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE)) {
-      execute(query);
-    }
-    this.task.stop();
-    this.connector.stop();
+  /** Ensures a missing expected row fails validation with its lookup query. */
+  @Test
+  public void assertRowFailsWhenExpectedRowIsMissing() {
+    RowValidator validation = RowValidator.of("missing_row", ImmutableMap.of("id", 12345L),
+            ImmutableMap.of("id", 12345L));
+    String query = validation.toString();
+    CqlSession session = mock(CqlSession.class);
+    ResultSet results = mock(ResultSet.class);
+    when(session.execute(query)).thenReturn(results);
+    when(results.one()).thenReturn(null);
+
+    AssertionError error = assertThrows(AssertionError.class, () -> assertRow(session, validation));
+    assertTrue(error.getMessage().contains(query));
   }
 
   @Test
@@ -892,6 +915,7 @@ public class ScyllaDbSinkConnectorIT {
     verify(this.sinkTaskContext, times(1)).offset(ImmutableMap.of(topicPartition, 123451234L));
   }
 
+  /** Checks record values before their TTL elapses and verifies that both rows expire. */
   @Test
   public void testRecordWithTtl() throws InterruptedException {
     final Map<String, String> settings = settings();
@@ -1196,6 +1220,7 @@ public class ScyllaDbSinkConnectorIT {
     }
   }
 
+  /** Looks up a row by key and validates the query result. */
   private void assertRow(CqlSession session, RowValidator validation) {
     String query = validation.toString();
     log.info("Querying for {}", query);
@@ -1203,6 +1228,7 @@ public class ScyllaDbSinkConnectorIT {
     assertRow(results.one(), validation, query);
   }
 
+  /** Checks row presence and compares fields when the row is expected to exist. */
   private void assertRow(Row row, RowValidator validation, String query) {
     if (validation.rowExists) {
       assertNotNull(
