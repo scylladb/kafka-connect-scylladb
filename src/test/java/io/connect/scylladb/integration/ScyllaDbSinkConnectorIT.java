@@ -130,22 +130,45 @@ public class ScyllaDbSinkConnectorIT {
     this.validations = new ArrayList<>();
   }
 
+  /** Validates expected rows before dropping the offset table and stopping the task and connector. */
   @AfterEach
   public void stop() {
-    if (!this.validations.isEmpty()) {
-      try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
-        for (RowValidator validation : validations) {
-          assertRow(session, validation);
+    try {
+      if (!this.validations.isEmpty()) {
+        try (CqlSession session = sessionBuilder().withKeyspace(SCYLLADB_KEYSPACE).build()) {
+          for (RowValidator validation : validations) {
+            assertRow(session, validation);
+          }
         }
       }
+    } finally {
+      try {
+        String query = "DROP TABLE" + " " + SCYLLADB_OFFSET_TABLE;
+        if (IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE)) {
+          execute(query);
+        }
+      } finally {
+        this.task.stop();
+        if (this.connector != null) {
+          this.connector.stop();
+        }
+      }
+    }
+  }
 
-    }
-    String query = "DROP TABLE" + " " + SCYLLADB_OFFSET_TABLE;
-    if (IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE)) {
-      execute(query);
-    }
-    this.task.stop();
-    this.connector.stop();
+  /** Ensures a missing expected row fails validation with its lookup query. */
+  @Test
+  public void assertRowFailsWhenExpectedRowIsMissing() {
+    RowValidator validation = RowValidator.of("missing_row", ImmutableMap.of("id", 12345L),
+            ImmutableMap.of("id", 12345L));
+    String query = validation.toString();
+    CqlSession session = mock(CqlSession.class);
+    ResultSet results = mock(ResultSet.class);
+    when(session.execute(query)).thenReturn(results);
+    when(results.one()).thenReturn(null);
+
+    AssertionError error = assertThrows(AssertionError.class, () -> assertRow(session, validation));
+    assertTrue(error.getMessage().contains(query));
   }
 
   @Test
@@ -892,6 +915,7 @@ public class ScyllaDbSinkConnectorIT {
     verify(this.sinkTaskContext, times(1)).offset(ImmutableMap.of(topicPartition, 123451234L));
   }
 
+  /** Checks record values before their TTL elapses and verifies that both rows expire. */
   @Test
   public void testRecordWithTtl() throws InterruptedException {
     final Map<String, String> settings = settings();
@@ -929,9 +953,6 @@ public class ScyllaDbSinkConnectorIT {
                     )
             )
     );
-    this.validations = records.stream()
-            .map(RowValidator::of)
-            .collect(Collectors.toList());
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
@@ -940,6 +961,14 @@ public class ScyllaDbSinkConnectorIT {
     String query = "select * from " + SCYLLADB_KEYSPACE + ".insertTestingttl";
     List<Row> beforeTTL = executeSelect(query);
     assertEquals(2, beforeTTL.size());
+    for (SinkRecord record : records) {
+      RowValidator validation = RowValidator.of(record);
+      Row row = beforeTTL.stream()
+              .filter(candidate -> validation.key.get("id").equals(candidate.getObject("id")))
+              .findFirst()
+              .orElse(null);
+      assertRow(row, validation, validation.toString());
+    }
     /**
      * we are setting the ttl value to 10 second. So we assume data will be deleted after 10 second.
      * Therefore giving a sleep of 12 sec.
@@ -1191,12 +1220,17 @@ public class ScyllaDbSinkConnectorIT {
     }
   }
 
+  /** Looks up a row by key and validates the query result. */
   private void assertRow(CqlSession session, RowValidator validation) {
     String query = validation.toString();
     log.info("Querying for {}", query);
     ResultSet results = session.execute(query);
-    Row row = results.one();
-    if (validation.rowExists && row != null) {
+    assertRow(results.one(), validation, query);
+  }
+
+  /** Checks row presence and compares fields when the row is expected to exist. */
+  private void assertRow(Row row, RowValidator validation, String query) {
+    if (validation.rowExists) {
       assertNotNull(
               row,
               String.format("Could not find result for query. Query = '%s'", query)
