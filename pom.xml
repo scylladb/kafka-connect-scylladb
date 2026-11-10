@@ -283,7 +283,7 @@
         <dependency>
             <groupId>io.confluent</groupId>
             <artifactId>common-utils</artifactId>
-            <version>8.4.0</version>
+            <version>8.4.1</version>
             <scope>test</scope>
         </dependency>
 
