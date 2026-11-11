@@ -539,7 +539,31 @@ class SigningTests(unittest.TestCase):
             with self.subTest(rejected=rejected), self.assertRaises(signing.SigningError):
                 signing.verify_status(accepted + "\n[GNUPG:] " + rejected + " " + signing.SIGNING[-16:])
 
+    def test_release_verifies_captured_tag_object_after_ref_moves(self):
+        """Replacing the tag after capture cannot redirect signature verification."""
+        with self.repository():
+            baseline = signing.run(["git", "rev-parse", "HEAD"]).strip()
+            with self.session():
+                self.release()
+            ref = "refs/tags/1.0.0"
+            tag_object = signing.run(["git", "rev-parse", ref]).strip()
+            commit = signing.run(["git", "rev-parse", ref + "^{commit}"]).strip()
+            real_run = signing.run
+
+            def replace_after_capture(command, env=None):
+                result = real_run(command, env)
+                if command == ["git", "rev-parse", "--verify", ref]:
+                    real_run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                              "-c", "tag.gpgSign=false", "tag", "-f", "-a", "1.0.0",
+                              "-m", "Unsigned replacement"])
+                return result
+
+            with patch.object(signing, "run", side_effect=replace_after_capture):
+                self.assertEqual(signing.verify_release("1.0.0", baseline), (tag_object, commit))
+            self.assertNotEqual(signing.run(["git", "rev-parse", ref]).strip(), tag_object)
+
     def test_signed_maven_history_and_cloned_checkout(self):
+        """Preserve the exact verified signed tag across Maven metadata cleanup."""
         with self.repository() as directory:
             baseline = signing.run(["git", "rev-parse", "HEAD"]).strip()
             os.environ["MAVEN_OPTS"] = "-Xmx512m"
@@ -565,6 +589,13 @@ class SigningTests(unittest.TestCase):
                          "verify-commit", "--raw", "HEAD"], public))
             Path("release.properties").write_text("scm.tagNameFormat=@{project.version}\nscm.tag=1.0.0\n")
             signing.verify_prepared(baseline)
+            signing.save_prepared(baseline)
+            retained = signing.PREPARED_METADATA.read_text()
+            self.assertIn("scylladb.prepared.tag=1.0.0\n", retained)
+            self.assertIn("scylladb.prepared.tagObject=" +
+                          signing.run(["git", "rev-parse", "refs/tags/1.0.0"]).strip() + "\n", retained)
+            self.assertIn("scylladb.prepared.commit=" +
+                          signing.run(["git", "rev-parse", "refs/tags/1.0.0^{commit}"]).strip() + "\n", retained)
             with patch.dict(os.environ, RELEASE_BASE_COMMIT=baseline):
                 signing.verify_prepared()
                 with patch("sys.argv", ["signing.py", "verify-release", "1.0.0"]):

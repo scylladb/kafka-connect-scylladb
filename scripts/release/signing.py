@@ -305,6 +305,7 @@ def verify_git(kind, ref):
 
 
 def verify_release(tag, baseline=None):
+    """Verify signed release history and return the exact verified tag identity."""
     baseline = baseline or os.environ.get("RELEASE_BASE_COMMIT")
     if not baseline:
         raise SigningError("Release verification requires the pre-prepare RELEASE_BASE_COMMIT or an explicit baseline.")
@@ -317,14 +318,18 @@ def verify_release(tag, baseline=None):
             verify_status(run(["git", "-c", "gpg.program=gpg", "verify-commit", "--raw", commit], env))
         ref = "refs/tags/" + tag
         run(["git", "check-ref-format", ref])
-        if run(["git", "cat-file", "-t", ref]).strip() != "tag":
+        tag_object = run(["git", "rev-parse", "--verify", ref]).strip()
+        if run(["git", "cat-file", "-t", tag_object]).strip() != "tag":
             raise SigningError("Release tags must be signed annotated tags.")
-        if run(["git", "rev-parse", ref + "^{commit}"]).strip() not in commits:
+        commit = run(["git", "rev-parse", tag_object + "^{commit}"]).strip()
+        if commit not in commits:
             raise SigningError("Release tag does not point to a newly signed release commit.")
-        verify_status(run(["git", "-c", "gpg.program=gpg", "verify-tag", "--raw", ref], env))
+        verify_status(run(["git", "-c", "gpg.program=gpg", "verify-tag", "--raw", tag_object], env))
+    return tag_object, commit
 
 
 def verify_prepared(baseline=None):
+    """Return the verified name, tag object and commit selected by Maven metadata."""
     metadata = Path("release.properties")
     if not metadata.exists():
         metadata = PREPARED_METADATA
@@ -332,15 +337,20 @@ def verify_prepared(baseline=None):
     tags = [line.removeprefix("scm.tag=") for line in properties if line.startswith("scm.tag=")]
     if len(tags) != 1:
         raise SigningError("Expected exactly one prepared Maven release tag.")
-    verify_release(tags[0], baseline)
+    return tags[0], *verify_release(tags[0], baseline)
 
 
 def save_prepared(baseline=None):
-    verify_prepared(baseline)
+    """Retain Maven metadata and the verified Git identity before perform cleanup."""
+    tag, tag_object, commit = verify_prepared(baseline)
     # release:perform deletes release.properties on success. Retain its public
     # prepared identity before publication for GitHub assets and notification.
     PREPARED_METADATA.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile("release.properties", PREPARED_METADATA)
+    with PREPARED_METADATA.open("a") as metadata:
+        metadata.write(f"\nscylladb.prepared.tag={tag}\n"
+                       f"scylladb.prepared.tagObject={tag_object}\n"
+                       f"scylladb.prepared.commit={commit}\n")
 
 
 def verify_commit(commit):
