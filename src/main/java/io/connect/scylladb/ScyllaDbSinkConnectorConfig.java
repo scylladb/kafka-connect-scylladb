@@ -590,7 +590,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     ConfigDef.Width.SHORT,
                     "Table Compression",
                     Collections.singletonList(TABLE_MANAGE_ENABLED_CONFIG),
-                    new VisibleIfEqual(TABLE_MANAGE_ENABLED_CONFIG, true, Arrays.asList(TABLE_COMPRESSORS.toArray(new String[0]))))
+                    new VisibleIfEqual(TABLE_MANAGE_ENABLED_CONFIG, true, Arrays.asList(TABLE_COMPRESSORS.toArray())))
             .define(
                     OFFSET_STORAGE_TABLE_CONF,
                     ConfigDef.Type.STRING,
@@ -665,7 +665,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     0,
                     ConfigDef.Width.NONE,
                     BEHAVIOR_ON_ERROR_DISPLAY,
-                    new ListRecommender(Arrays.asList(toStringArray(BehaviorOnError.values())))
+                    new ListRecommender(Arrays.asList((Object[]) toStringArray(BehaviorOnError.values())))
             )
             // Write timestamp
             .define(
