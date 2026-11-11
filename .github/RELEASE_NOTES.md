@@ -4,7 +4,10 @@ The Release workflow publishes to Maven Central, pushes the release tag, then
 runs the preserved `github-release` Make target to create generated GitHub release
 notes. The signed-release helper verifies the prepared Maven identity and both
 artifact signatures, then stages the JAR, Confluent ZIP, and detached signatures
-in a draft before publishing it. Creation requires the remote tag. An existing
+in a draft before publishing it. Before release discovery, publication requires
+the local tag and `origin` to match the tag object and peeled commit saved during
+verified preparation, including after Maven removes `release.properties`.
+Missing, unavailable, or mismatched remote tags stop publication. An existing
 draft or published release fails visibly without replacing assets or notes;
 inspect and recover it manually.
 Signing, credential checks, release blockers, and Confluent notifications remain

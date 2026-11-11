@@ -55,13 +55,44 @@ def artifacts():
             target / "components/packages" / f"scylladb-kafka-connect-scylladb-{version}.zip"]
 
 
+def verify_remote_tag(tag):
+    """Require local and origin refs to retain the identity verified at preparation."""
+    metadata = signing.PREPARED_METADATA.read_text()
+    expected = {}
+    for key in ("tag", "tagObject", "commit"):
+        values = re.findall(r"^scylladb\.prepared\." + key + r"=(.*)$", metadata, re.M)
+        if len(values) != 1:
+            raise signing.SigningError("Missing or ambiguous saved prepared tag identity.")
+        expected[key] = values[0]
+    if (expected["tag"] != tag or
+            any(not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", expected[key])
+                for key in ("tagObject", "commit"))):
+        raise signing.SigningError("Invalid saved prepared tag identity.")
+    ref = "refs/tags/" + tag
+    local_object = signing.run(["git", "rev-parse", "--verify", ref]).strip()
+    local_commit = signing.run(["git", "rev-parse", "--verify", ref + "^{commit}"]).strip()
+    if local_object != expected["tagObject"] or local_commit != expected["commit"]:
+        raise signing.SigningError("Prepared release tag changed locally; no publication attempted.")
+    try:
+        remote = signing.run(["git", "ls-remote", "--exit-code", "origin", ref, ref + "^{}"])
+    except signing.SigningError:
+        raise signing.SigningError(
+            "Could not verify prepared release tag on origin; no publication attempted.") from None
+    refs = dict(line.split()[::-1] for line in remote.splitlines())
+    remote_commit = refs.get(ref + "^{}", refs.get(ref))
+    if refs.get(ref) != local_object or remote_commit != local_commit:
+        raise signing.SigningError("Prepared release tag differs on origin; no publication attempted.")
+
+
 def publish():
+    """Verify the prepared signed assets and tag, then stage and publish a new release."""
     tag, _ = identity()
     files = artifacts()
     # Publication verifies existing signatures with public material only.
     if any(not Path(str(path) + ".asc").is_file() for path in files):
         raise signing.SigningError("Sign and verify both GitHub assets before publication.")
     signing.sign_files(files)
+    verify_remote_tag(tag)
     assets = [str(item) for path in files for item in (path, str(path) + ".asc")]
     query = ("query($owner:String!,$name:String!,$tag:String!){"
              "repository(owner:$owner,name:$name){release(tagName:$tag){id}}}")

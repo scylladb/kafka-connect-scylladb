@@ -230,9 +230,17 @@ after `release:perform`. GitHub receives both files and their detached `.asc`
 signatures. Tag, version and filenames come from `release.properties` and the tagged
 Maven POM, so unrelated or newer tags cannot select another release's assets.
 Preparation saves verified metadata in `target/release-prepared.properties` because
-Maven removes `release.properties` after a successful perform.
+Maven removes `release.properties` after a successful perform. The saved metadata
+includes the exact verified tag name, tag object and peeled commit. Recover this
+original metadata too; older copies without the identity snapshot cannot authorize
+GitHub publication.
 `make github-release` verifies the existing signatures with the public certificate
-before checking GitHub. It refuses an existing release or draft and never
+before checking GitHub. It also requires both the local tag and `origin` to match
+the tag object and peeled commit saved during verified preparation. A changed
+local tag or an absent, unavailable, or different remote tag stops
+publication before any GitHub release lookup or write. This bounded check cannot
+prevent a subsequent remote change; keep tag protection enabled.
+It refuses an existing release or draft and never
 regenerates signatures. Discovery errors stop publication. For a new release,
 it creates a draft with all four files and an existing remote tag, then publishes
 only after all uploads succeed.
