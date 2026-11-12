@@ -7,6 +7,7 @@ import com.datastax.oss.driver.shaded.guava.common.base.Joiner;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.ScyllaDbSinkConnectorConfig;
 import io.connect.scylladb.WriteTimestamp;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -102,6 +103,24 @@ public class TopicConfigs {
                                       && level != DefaultConsistencyLevel.LOCAL_SERIAL)
                               .collect(Collectors.toList()))
       );
+    }
+  }
+
+  public static void validateMapping(String setting, String mapping) {
+    Map<String, String> sourcesByColumn = new HashMap<>();
+    for (String mappedEntry : mapping.split(",")) {
+      String[] columnNameMap = mappedEntry.split("=");
+      if (columnNameMap.length != 2) {
+        continue;
+      }
+      String column = columnNameMap[0].trim();
+      String source = columnNameMap[1];
+      String columnId = columnId(column);
+      String previousSource = sourcesByColumn.putIfAbsent(columnId, source);
+      if (previousSource != null && !previousSource.equals(source)) {
+        throw new ConfigException(setting, mapping,
+                String.format("Column '%s' is mapped from both '%s' and '%s'.", columnId, previousSource, source));
+      }
     }
   }
 

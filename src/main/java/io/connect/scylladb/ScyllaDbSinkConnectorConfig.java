@@ -164,6 +164,9 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
         }
         final Map<String, String> topicMap = topicWiseConfigsMap.computeIfAbsent(topicName, t -> new HashMap());
         checkTimestampSetting(name2, m.group(4), entry.getValue());
+        if ("mapping".equals(m.group(4))) {
+          TopicConfigs.validateMapping(name2, entry.getValue());
+        }
         topicMap.put(m.group(4), entry.getValue());
         if ("consistencyLevel".equals(m.group(4))) {
           consistencyLevelSettings.put(topicName, name2);

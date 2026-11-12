@@ -208,6 +208,10 @@ the sanitized name may be another subscribed topic.
   For mapping topic and fields from Kafka record's key, value and headers to ScyllaDB table and its columns.
  `my_topic` should refer to the topic name as seen in a SinkRecord passed to the Connector - which means after all Single Message Transforms.   
   For example if you're using RegexRouter to change the topic name from `top1` to `top2` you would use `topic.top2.ks.table.mapping=...` property.
+
+  Each destination column can map to only one record field. For example, the connector rejects
+  `userid=key.id,userid=value.id` when it builds the configuration. Unquoted names are
+  case-insensitive, so `USERID` and `"userid"` also refer to the same column.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
   In the Kafka topic mapping, you can optionally specify which column should be used as the ttl (time-to-live) and 
