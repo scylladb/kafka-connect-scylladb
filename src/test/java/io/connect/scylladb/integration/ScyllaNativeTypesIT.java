@@ -58,7 +58,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 public class ScyllaNativeTypesIT {
     private static final Logger log = LoggerFactory.getLogger(ScyllaNativeTypesIT.class);
@@ -687,8 +686,8 @@ public class ScyllaNativeTypesIT {
         final TopicPartition topicPartition = new TopicPartition(topic, 1);
         currentTestTable = topic;
         makeSimpleTable(topic, type);
-        when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
         this.task.start(settings);
+        this.task.open(ImmutableSet.of(topicPartition));
     }
 
     private SinkRecord setupRecord(String topic, String type, int id, Schema colSchema, Object colValue){
@@ -717,6 +716,5 @@ public class ScyllaNativeTypesIT {
         Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
         assertEquals(true, tableExists);
         verify(this.sinkTaskContext, times(numOfPuts)).requestCommit();
-        verify(this.sinkTaskContext, times(1)).assignment();
     }
 }

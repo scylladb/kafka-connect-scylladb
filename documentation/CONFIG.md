@@ -422,8 +422,10 @@ The connector tells three kinds of failures apart:
   with ``scylladb.table.manage.enabled``, restarting the task recreates the table or column. A
   delete from a missing table is skipped with a warning.
 
-With ``scylladb.offset.storage.table.enable=true`` (the default) the task reads its offsets from
-ScyllaDB when it starts, so an outage at that moment fails the task. Writes to the offset table are
+With ``scylladb.offset.storage.table.enable=true`` (the default), the task reads stored offsets from
+ScyllaDB when Kafka Connect opens partitions, both on initial assignment and after a rebalance.
+Partitions without a stored offset keep their Kafka consumer position. An offset read failure
+fails the task. Writes to the offset table are
 retried by the worker and do not count against ``scylladb.max.retries``; bounding them is tracked in
 [#294](https://github.com/scylladb/kafka-connect-scylladb/issues/294).
 
