@@ -115,9 +115,6 @@ public class TopicConfigs {
       }
       String column = columnNameMap[0].trim();
       String source = columnNameMap[1];
-      if (source.startsWith("value.") && (column.equals("__ttl") || column.equals("__timestamp"))) {
-        continue;
-      }
       String columnId = columnId(column);
       String previousSource = sourcesByColumn.putIfAbsent(columnId, source);
       if (previousSource != null && !previousSource.equals(source)) {
