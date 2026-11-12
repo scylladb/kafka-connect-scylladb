@@ -4,9 +4,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -44,26 +44,25 @@ public class ScyllaDbSinkTask extends SinkTask {
   // Visible for testing
   ScyllaDbSession session;
 
-  /**
-   * Starts the sink task. 
-   * If <code>scylladb.offset.storage.table.enable</code> is set to true, 
-   * the task will load offsets for each Kafka topic-partition from
-   * ScyllaDB offset table into task context.
-   */
   @Override
   public void start(Map<String, String> settings) {
     this.config = new ScyllaDbSinkConnectorConfig(settings);
     this.reporter = errantRecordReporter();
     this.consecutiveFailures = 0;
-    if (config.isOffsetEnabledInScyllaDb()) {
-      Set<TopicPartition> assignment = context.assignment();
-      this.session = getValidSession();
-      Map<TopicPartition, Long> offsets = session.loadOffsets(assignment);
+    topicOffsets = new HashMap<>();
+  }
+
+  /**
+   * Restores stored ScyllaDB offsets for the partitions opened by Kafka Connect.
+   */
+  @Override
+  public void open(Collection<TopicPartition> partitions) {
+    if (config.isOffsetEnabledInScyllaDb() && !partitions.isEmpty()) {
+      Map<TopicPartition, Long> offsets = getValidSession().loadOffsets(new HashSet<>(partitions));
       if (!offsets.isEmpty()) {
         context.offset(offsets);
       }
     }
-    topicOffsets = new HashMap<>();
   }
 
   private ErrantRecordReporter errantRecordReporter() {
