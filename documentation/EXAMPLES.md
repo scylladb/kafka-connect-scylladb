@@ -2,6 +2,34 @@
 Below are examples of non-trivial connector configurations.   
 For simpler step-by-step instructions with environment setup check out [quickstart](QUICKSTART.md) first.
 
+## Expire records after a validity date
+
+The following mapping uses the `validUntil` field as an absolute expiration timestamp and keeps each record for one
+additional day. `validUntil` can be a Kafka Timestamp or a Unix epoch time as an integer, here in milliseconds.
+
+```
+topics = events
+scylladb.keyspace = example_ks
+topic.events.example_ks.events.mapping = id=key.id, payload=value.payload, __expiration=value.validUntil
+topic.events.example_ks.events.expirationUnit = MILLISECONDS
+topic.events.example_ks.events.expirationOffsetSeconds = 86400
+```
+
+At insert time the connector calculates:
+
+```
+TTL = ceil(validUntil + 86400 seconds) - floor(current time), in whole seconds
+```
+
+ScyllaDB adds the TTL to its current time truncated to whole seconds, so the row does not expire before
+`validUntil` plus the offset, as long as the clocks of the connector and ScyllaDB agree.
+
+Records whose resulting expiration time is not in the future delete their row instead, so an earlier
+version cannot outlive them. With `topic.events.example_ks.events.behaviorOnExpired = SKIP` they are skipped,
+and with `FAIL` they fail: they go to the errant record reporter, or, without one, `behavior.on.error` decides.
+If `validUntil` holds Unix epoch seconds, set `expirationUnit = SECONDS` instead. The setting is required
+with `__expiration`, even for a Kafka Timestamp, which ignores it. A `validUntil` of `0` never expires.
+
 
 ## One topic to many tables
 

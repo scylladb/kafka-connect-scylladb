@@ -180,8 +180,8 @@ can be forced by using double-quotes ("myTable" is different from mytable).
 
 These configurations can be specified for multiple Kafka topics from which records are being processed. 
 Also, these topic level configurations will override the behavior of Connector level configurations such as 
-``scylladb.consistency.level``, ``scylladb.deletes.enabled``, ``scylladb.ttl``, ``scylladb.timestamp.field`` and
-``scylladb.timestamp.unit``
+``scylladb.consistency.level``, ``scylladb.deletes.enabled``, ``scylladb.deletes.field``,
+``scylladb.deletes.values``, ``scylladb.ttl``, ``scylladb.timestamp.field`` and ``scylladb.timestamp.unit``
 
 Records from `my_topic` are written to the table `my_table` in the keyspace `my_ks`:
 
@@ -210,15 +210,36 @@ the sanitized name may be another subscribed topic.
   For example if you're using RegexRouter to change the topic name from `top1` to `top2` you would use `topic.top2.ks.table.mapping=...` property.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
-  In the Kafka topic mapping, you can optionally specify which column should be used as the ttl (time-to-live) and 
-  timestamp of the record being inserted into the database table using the special property __ttl and __timestamp.
+  A column, ``__ttl`` or ``__timestamp`` entry uses the whole path after ``key.``, ``value.`` or ``header.`` as one
+  name: ``col=value.a.b`` reads the top-level field named ``a.b``, and ``col=header.trace.id`` the header
+  ``trace.id``. Earlier versions ignored everything after the second dot, so ``col=value.a.b`` read the field ``a``.
+  ``__expiration`` is the exception: like ``scylladb.timestamp.field``, its path steps into nested fields.
+  In the Kafka topic mapping, you can optionally specify fields that control the ttl (time-to-live), absolute
+  expiration time, and write timestamp of the record using the special properties ``__ttl``, ``__expiration``,
+  and ``__timestamp``.
+  ``__ttl`` must reference an Integer field containing a relative lifetime in seconds.
+  ``__expiration`` must reference a Kafka Timestamp, or a Unix epoch time as an integer (or a string holding one)
+  in the unit set by ``expirationUnit``, which it requires; an expiry of ``0``, in either form, means the record
+  never expires. Its path may step into nested structs or maps, as in ``__expiration=value.metadata.exp``.
+  The connector calculates a per-record TTL from the absolute expiration time. A negative expiry, or a TTL above
+  ScyllaDB's maximum of 20 years (630720000 seconds), fails the record: it goes to the errant record reporter under
+  ``errors.tolerance``, or, without a reporter, ``behavior.on.error`` decides.
+  A mapping cannot contain both ``__ttl`` and ``__expiration``, and a topic that maps ``__expiration`` cannot also
+  set ``ttlSeconds``.
+  ``expirationUnit``, ``expirationOffsetSeconds`` and ``behaviorOnExpired`` apply only with ``__expiration``; set
+  without it, any of them fails the config.
   By default, the database internally tracks the write time(timestamp) of records inserted into Kafka. 
   However, this __timestamp feature in the mapping supports the scenario where the Kafka records have an explicit 
   timestamp field that you want to use as a write time for the database record produced by the connector. 
   Eg. "topic.my_topic.my_ks.my_table.mapping": 
   "column1=key.field1, column2=value.field1, __ttl=value.field2, __timestamp=value.field3, column3=header.field1"
 
-  **Deprecated**: ``__timestamp`` reads only the value, in microseconds, and deletes use the Kafka record timestamp.
+  Or, with an absolute expiration time in epoch seconds:
+  "topic.my_topic.my_ks.my_table.mapping":
+  "column1=key.field1, column2=value.field1, __expiration=value.validUntil, __timestamp=value.field3, column3=header.field1"
+  "topic.my_topic.my_ks.my_table.expirationUnit": "SECONDS"
+
+  **Deprecated**: ``__timestamp`` reads only the value, in microseconds, and tombstones use the Kafka record timestamp.
   Use ``scylladb.timestamp.field`` or ``timestampField`` instead; they take precedence over ``__timestamp``.
 
   A tombstone deletes by the record key alone. Each key field binds to the primary key column of its ``key.``
@@ -235,10 +256,34 @@ the sanitized name may be another subscribed topic.
 
   By using this property we can specify table wide ttl(time-to-live).
 
+``topic.my_topic.my_ks.my_table.expirationOffsetSeconds``
+
+  A non-negative number of seconds added to the timestamp referenced by ``__expiration`` before calculating TTL.
+  For example, use ``86400`` to expire a record one day after its expiration timestamp. The default is ``0``.
+
+``topic.my_topic.my_ks.my_table.expirationUnit``
+
+  The unit of an integer ``__expiration`` field, or of a string holding one: ``SECONDS`` or ``MILLISECONDS``.
+  It has no default and is required whenever the mapping contains ``__expiration``, since integers read in the
+  wrong unit would all be treated as expired, and by default delete their rows, or fail as too far in the future.
+  A Kafka Timestamp field still needs the setting, which it then ignores.
+
+``topic.my_topic.my_ks.my_table.behaviorOnExpired``
+
+  What to do with a record whose expiration time, plus ``expirationOffsetSeconds``, is not in the future, as when
+  the connector lags or replays: ``DELETE``, ``SKIP`` or ``FAIL``, case-insensitive.
+  ``DELETE`` (the default) deletes the row at the record's write timestamp, as a delete for the record would, so
+  an earlier version of the row cannot outlive the record; it does so even when deletes are disabled, and skips
+  the record when the table does not exist. Like any delete, it needs a record key that holds the primary key;
+  without one the record fails, so use ``SKIP`` for such topics. ``SKIP`` skips it with a warning, leaving any
+  earlier version of the row as it was. ``FAIL`` fails it: it goes to the errant record reporter under
+  ``errors.tolerance``, or, without a reporter, ``behavior.on.error`` decides.
+
 ``topic.my_topic.my_ks.my_table.deletesEnabled``
 
   By using this property we can specify if tombstone records(records with Kafka value as null) 
-  should processed as delete request.
+  should processed as delete request. It applies to records flagged by ``scylladb.deletes.field`` too.
+  A record that has already expired deletes its row whatever this says; see ``behaviorOnExpired``.
 
 ``topic.my_topic.my_ks.my_table.timestampField``
 
@@ -250,6 +295,15 @@ the sanitized name may be another subscribed topic.
 
   Overrides ``scylladb.timestamp.unit`` for this topic, whether the field comes from ``timestampField`` or
   ``scylladb.timestamp.field``.
+
+``topic.my_topic.my_ks.my_table.deletesField``
+
+  Overrides ``scylladb.deletes.field`` for this topic. The values are still ``scylladb.deletes.values`` unless
+  ``deletesValues`` is set for the topic too.
+
+``topic.my_topic.my_ks.my_table.deletesValues``
+
+  Overrides ``scylladb.deletes.values`` for this topic, as a comma-separated list.
 
 
 ### Write
@@ -269,8 +323,8 @@ the sanitized name may be another subscribed topic.
 ``scylladb.deletes.enabled``
 
   Flag to determine if the connector should process deletes. 
-  The Kafka records with kafka record value as null will result in deletion of ScyllaDB record 
-  with the primary key present in Kafka record key.
+  The Kafka records with kafka record value as null, or flagged by ``scylladb.deletes.field``, will result in
+  deletion of ScyllaDB record with the primary key present in Kafka record key.
 
   * Type: boolean
   * Default: true
@@ -306,11 +360,12 @@ the sanitized name may be another subscribed topic.
 
   The record field to take the write timestamp (CQL ``USING TIMESTAMP``) from, for both writes and deletes.
   Written as ``key.<field>``, ``value.<field>`` or ``header.<name>``; nested fields are separated by dots,
-  for example ``value.metadata.lut`` for a last-update time carried in the change metadata of the record.
+  for example ``value.metadata.updated_at`` for a last-update time carried in the change metadata of the record.
   A header name may itself contain dots: the longest name that matches a header is used.
   A record whose field is missing or null fails: it goes to the errant record reporter under ``errors.tolerance``,
-  or, without a reporter, ``behavior.on.error`` decides.
-  Tombstones have no value, so deletes need a ``key.`` or ``header.`` field. Prefer ``header.``: a table the
+  or, without a reporter, ``behavior.on.error`` decides. A delete reads its field only once its table is known
+  to exist, so a delete from a missing table is skipped whatever its field holds.
+  Tombstones have no value, so they need a ``key.`` or ``header.`` field. Prefer ``header.``: a table the
   connector creates without a ``mapping`` puts every key field into the primary key, so with ``key.`` each event
   would get its own row.
   Use ``key.`` only when the table already exists or the field is meant to be part of the key.
@@ -323,9 +378,11 @@ the sanitized name may be another subscribed topic.
   TTL again. Events with equal timestamps are still resolved by ScyllaDB's tie rules (a delete wins over a
   write), so the field orders events correctly only when it changes with every event of a row. Write timestamps
   have microsecond precision, so with ``NANOSECONDS`` events within one microsecond also tie.
-  A delete is kept as a tombstone only until ScyllaDB may purge it: ``gc_grace_seconds`` after the delete, or
-  after a repair with ``tombstone_gc`` mode ``repair``. An older write replayed after that can bring the row back,
-  so keep that window longer than the longest replay delay you expect.
+  A delete is kept as a tombstone only until ScyllaDB may purge it, which depends on the table's ``tombstone_gc``
+  mode. Under mode ``repair``, that is after the first repair that runs ``propagation_delay_in_seconds`` (one hour
+  by default) after the delete, or right away at replication factor 1; under mode ``timeout``, it is
+  ``gc_grace_seconds`` after the delete. An older write replayed after that can bring the row back, so keep that
+  delay longer than the longest replay delay you expect.
   Create the table before records flow: a delete for a missing table is skipped, so a later write with an older
   timestamp would then create the row.
 
@@ -364,6 +421,44 @@ the sanitized name may be another subscribed topic.
   * Importance: Low
   * Valid Values: [1,...]
   * Default Value: 3000
+
+``scylladb.deletes.field``
+
+  The record field that marks a record with a value as a delete, for sources whose change streams send a delete
+  as a record with a payload rather than as a tombstone. Written like ``scylladb.timestamp.field``:
+  ``key.<field>``, ``value.<field>`` or ``header.<name>``, with nested fields separated by dots.
+  A record whose field holds one of ``scylladb.deletes.values`` deletes the row with the primary key in the record
+  key, exactly like a tombstone: it needs ``scylladb.deletes.enabled``, binds only the key, and uses the same
+  write timestamp as a write. A record whose field is missing, null or holds another value is written, and a
+  missing or null field is logged as a warning once per topic and task; one whose field holds anything but a string,
+  number or boolean fails, as does one whose path steps into something that is not a struct or map.
+  When empty, only tombstones are deletes.
+
+  For example, when the change metadata of each record names the operation and its last-update time in
+  milliseconds:
+
+      scylladb.deletes.field=value.metadata.op
+      scylladb.deletes.values=delete
+      scylladb.timestamp.field=value.metadata.updated_at
+      scylladb.timestamp.unit=MILLISECONDS
+
+  A delete binds the primary key from the record key exactly as a tombstone does; see ``mapping``. Take the write
+  timestamp from the source, as above: change streams redeliver and reorder events, and only then does a stale
+  write lose to a later delete. Once ScyllaDB purges the tombstone, a replayed older write can bring the row back;
+  see ``scylladb.timestamp.field`` for when that happens.
+
+  * Type: String
+  * Importance: Medium
+  * Default Value: ""
+
+``scylladb.deletes.values``
+
+  The values of ``scylladb.deletes.field`` that mark a delete, compared case-sensitively with the field's text
+  form, for example ``delete``, or ``true`` for a boolean flag. Required when ``scylladb.deletes.field`` is set.
+
+  * Type: List
+  * Importance: Medium
+  * Default Value: ""
 
 ### ScyllaDB
 

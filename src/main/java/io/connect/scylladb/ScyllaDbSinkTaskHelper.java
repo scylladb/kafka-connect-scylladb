@@ -83,43 +83,66 @@ public class ScyllaDbSinkTaskHelper {
 
   /**
    * @return the statement to execute for the record, or <code>null</code> when there is nothing to
-   * execute: a delete from a table that does not exist.
+   * execute: a delete from a table that does not exist, or a record that has already expired and
+   * is to be skipped. A record that has already expired and is to delete its row is a delete.
    */
   public BoundStatement getBoundStatementForRecord(SinkRecord record) {
     BoundStatement boundStatement = null;
     final TopicConfigs topicConfigs = topicConfigsFor(record.topic());
     final String keyspace;
     final String tableName;
+    final DeleteFlag deleteFlag = topicConfigs != null
+            ? topicConfigs.getDeleteFlag() : scyllaDbSinkConnectorConfig.deleteFlag;
+    // Sources that send deletes as records with a payload flag them in a field.
+    boolean delete = null == record.value() || deleteFlag != null && deleteFlag.matches(record);
+    boolean expired = false;
     if (topicConfigs != null) {
       keyspace = topicConfigs.getKeyspace();
       tableName = topicConfigs.getTable();
       if (topicConfigs.getMappingStringForTopic() != null && !topicConfigs.isScyllaColumnsMapped()) {
-        topicConfigs.setTablePartitionAndColumnValues(record);
+        topicConfigs.setTablePartitionAndColumnValues(record, delete);
       }
-      topicConfigs.setTtlIfAvailable(record);
+      if (!delete && !topicConfigs.setTtlIfAvailable(record)) {
+        if (!topicConfigs.deletesExpired()) {
+          log.warn("put() - record of topic '{}' (partition {}, offset {}) has already expired. Skipping it.",
+                  record.topic(), record.kafkaPartition(), record.kafkaOffset());
+          return null;
+        }
+        // DEBUG, as a lagging sink meets many: deleting is the default.
+        log.debug("put() - record of topic '{}' (partition {}, offset {}) has already expired. Deleting its row.",
+                record.topic(), record.kafkaPartition(), record.kafkaOffset());
+        delete = true;
+        expired = true;
+      }
     } else {
       keyspace = scyllaDbSinkConnectorConfig.keyspace;
       tableName = sanitizedTableName(record.topic());
     }
-    // Read a field before any DDL, so a record that fails here leaves the table untouched.
     final WriteTimestamp writeTimestamp = topicConfigs != null
             ? topicConfigs.getWriteTimestamp() : scyllaDbSinkConnectorConfig.writeTimestamp;
-    final Long fieldTimestamp = writeTimestamp != null ? writeTimestamp.micros(record) : null;
-    if (null == record.value()) {
-      boolean deletionEnabled = topicConfigs != null
-              ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled;
+    // A write reads its field before any DDL, so a record that fails here leaves the table untouched.
+    // A delete reads it once its table is known to exist, so a delete from a missing table is skipped.
+    Long fieldTimestamp = writeTimestamp != null && !delete ? writeTimestamp.micros(record) : null;
+    if (delete) {
+      // An expired record's delete follows from its own expiry, not from the source deleting it.
+      boolean deletionEnabled = expired || (topicConfigs != null
+              ? topicConfigs.isDeletesEnabled() : scyllaDbSinkConnectorConfig.deletesEnabled);
       if (deletionEnabled) {
         if (this.session.tableExists(keyspace, tableName)) {
+          fieldTimestamp = writeTimestamp != null ? writeTimestamp.micros(record) : null;
           final RecordToBoundStatementConverter boundStatementConverter = this.session.delete(keyspace, tableName);
           final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.DELETE_OPERATION);
+          final String expiredHint = expired
+                  ? " A record that has already expired deletes its row by its key; behaviorOnExpired=SKIP skips it instead."
+                  : "";
           if (state.parameters == 0) {
-            throw new DataException("key must contain the columns in the primary key.");
+            throw new DataException("key must contain the columns in the primary key." + expiredHint);
           }
           final List<String> unbound = state.unboundVariables();
           if (!unbound.isEmpty()) {
             throw new DataException(String.format(
                     "key must contain the columns in the primary key, but primary key column(s) %s of table "
-                            + "'%s.%s' are not bound by it.", unbound, keyspace, tableName));
+                            + "'%s.%s' are not bound by it.%s", unbound, keyspace, tableName, expiredHint));
           }
           boundStatement = state.statement;
         } else {
@@ -128,7 +151,7 @@ public class ScyllaDbSinkTaskHelper {
         }
       } else {
         throw new DataException(
-                String.format("Record with null value found for the key '%s'. If you are trying to delete the record set "
+                String.format("Record with null value or flagged as a delete found for the key '%s'. If you are trying to delete the record set "
                                 + "scylladb.deletes.enabled = true or topic.my_topic.my_ks.my_table.deletesEnabled = true in "
                                 + "your connector configuration.",
                         record.key()));
@@ -138,6 +161,9 @@ public class ScyllaDbSinkTaskHelper {
       final RecordToBoundStatementConverter boundStatementConverter = this.session.insert(keyspace, tableName, topicConfigs);
       final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
       boundStatement = state.statement;
+      if (topicConfigs != null && topicConfigs.getTtl() != null) {
+        boundStatement = boundStatement.setInt(ScyllaDbConstants.TTL_BIND_MARKER, topicConfigs.getTtl());
+      }
     }
 
     // The Kafka timestamp is read last, as before, so the delete checks above still report first.
