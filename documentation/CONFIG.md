@@ -220,9 +220,11 @@ the sanitized name may be another subscribed topic.
   and ``__timestamp``.
   ``__ttl`` must reference an Integer field containing a relative lifetime in seconds.
   ``__expiration`` accepts a Kafka Connect Timestamp or Date, an ISO-8601 string, or a Unix epoch time as an
-  integer or integer string in the unit set by ``expirationUnit``. A Date or an ISO-8601 date such as
-  ``2026-12-01`` expires at the start of that date in UTC. An ISO-8601 date-time must include ``Z`` or a UTC
-  offset, as in ``2026-12-01T09:30:00+05:30``.
+  integer or integer string in the unit set by ``expirationUnit``. Date-only strings require hyphens
+  (``YYYY-MM-DD``, for example ``2026-12-01``). They expire at midnight UTC, as does a Connect Date.
+  Digit-only strings such as ``20261201`` are epoch integers in the configured unit, including ``SECONDS``.
+  An ISO-8601 date-time must include ``Z`` or a UTC offset. Both extended and basic forms are accepted,
+  for example ``2026-12-01T09:30:00+05:30`` and ``20261201T093000+0530``.
   A zero integer, integer string, or Kafka Connect Timestamp means the record never expires.
   The path may step into nested structs or maps, as in ``__expiration=value.metadata.exp``.
   The connector calculates a per-record TTL from the absolute expiration time. A negative expiry, or a TTL above

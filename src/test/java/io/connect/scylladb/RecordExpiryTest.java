@@ -83,11 +83,30 @@ public class RecordExpiryTest {
   }
 
   @Test
+  public void shouldRejectConnectDateWithTimeOfDay() {
+    Schema schema = SchemaBuilder.struct().field("expiresAt", org.apache.kafka.connect.data.Date.SCHEMA).build();
+    Struct value = new Struct(schema).put("expiresAt", Date.from(Instant.parse("2023-11-15T12:00:00Z")));
+    SinkRecord record = new SinkRecord("t", 0, null, null, schema, value, 7L);
+
+    DataException error = assertThrows(DataException.class,
+        () -> RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE).ttlSeconds(record, NOW_MILLIS));
+    assertTrue(error.getMessage(), error.getMessage().contains("must be at midnight UTC"));
+  }
+
+  @Test
   public void shouldReadIsoDatesAndOffsetDateTimesInAnyUnit() {
     assertEquals(OptionalInt.of(6_400), ttl("SECONDS", 0, DELETE, "2023-11-15"));
     assertEquals(OptionalInt.of(6_400), ttl("MILLISECONDS", 0, DELETE, "2023-11-15T00:00:00Z"));
     assertEquals(OptionalInt.of(6_460), ttl("SECONDS", 60, DELETE, " 2023-11-15T05:30:00+05:30 "));
     assertEquals(OptionalInt.of(2), ttl("SECONDS", 0, DELETE, "2023-11-14T22:13:21.000000001Z"));
+  }
+
+  @Test
+  public void shouldReadBasicIsoDateTimesAndKeepDigitOnlyDatesAsEpochValues() {
+    assertEquals(OptionalInt.of(6_400), ttl("MILLISECONDS", 0, DELETE, "20231115T000000Z"));
+    assertEquals(OptionalInt.of(6_400), ttl("SECONDS", 0, DELETE, "20231114T190000-0500"));
+    assertEquals(OptionalInt.of(2), ttl("SECONDS", 0, DELETE, "20231114T221321.000000001Z"));
+    assertEquals(ttl("SECONDS", 0, DELETE, 20_261_201L), ttl("SECONDS", 0, DELETE, "20261201"));
   }
 
   @Test
@@ -181,7 +200,8 @@ public class RecordExpiryTest {
 
   @Test
   public void shouldRejectInvalidExpiryValues() {
-    for (String invalid : new String[] {"soon", "2023-02-29", "2023-11-15T00:00:00", "+999999999-01-01"}) {
+    for (String invalid : new String[] {"soon", "2023-02-29", "2023-11-15T00:00:00",
+        "20231115T000000", "20230229T000000Z", "+999999999-01-01"}) {
       DataException text = assertThrows(DataException.class, () -> ttl("SECONDS", 0, DELETE, invalid));
       assertTrue(text.getMessage(), text.getMessage().contains("topic 't' (partition 0, offset 7)"));
       assertTrue(text.getMessage(), text.getMessage().contains("ISO-8601 date or offset date-time"));

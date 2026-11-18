@@ -5,9 +5,10 @@ For simpler step-by-step instructions with environment setup check out [quicksta
 ## Expire records after a validity date
 
 The following mapping uses the `validUntil` field as an absolute expiration timestamp and keeps each record for one
-additional day. If `validUntil` is a Kafka Connect Date or an ISO-8601 date such as `2026-12-01`, the offset
+additional day. If `validUntil` is a Kafka Connect Date or a hyphenated date string (`YYYY-MM-DD`, such as `2026-12-01`), the offset
 keeps the record until midnight UTC at the start of the following day. The field also accepts Kafka Connect
-Timestamp, ISO-8601 date-times with an explicit UTC offset, and Unix epoch integers, here in milliseconds.
+Timestamp, ISO-8601 date-times with an explicit UTC offset (such as `2026-12-01T04:00:00Z` or `20261201T040000Z`),
+and Unix epoch integers and integer strings, here in milliseconds.
 
 ```
 topics = events

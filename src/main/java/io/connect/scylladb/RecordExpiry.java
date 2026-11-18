@@ -8,7 +8,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
+import java.time.temporal.ChronoField;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -48,6 +52,12 @@ public final class RecordExpiry {
   static final long MAX_TTL_SECONDS = 630_720_000L;
 
   private static final String LABEL = "Expiration field";
+  private static final DateTimeFormatter BASIC_OFFSET_DATE_TIME = new DateTimeFormatterBuilder()
+      .appendPattern("uuuuMMdd'T'HHmmss")
+      .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true)
+      .appendOffset("+HHmm", "Z")
+      .toFormatter(Locale.ROOT)
+      .withResolverStyle(ResolverStyle.STRICT);
 
   private final RecordField recordField;
   private final String field;
@@ -132,6 +142,11 @@ public final class RecordExpiry {
     if (connectDate || WriteTimestamp.isTimestamp(LABEL, field, record, value, resolved.schema)) {
       // Connect Date represents an epoch day as milliseconds at UTC midnight.
       amount = ((Date) value).getTime();
+      if (connectDate && amount % TimeUnit.DAYS.toMillis(1) != 0) {
+        throw new DataException(String.format(
+            "%s '%s' in %s must be at midnight UTC for a Kafka Connect Date.",
+            LABEL, field, RecordField.where(record)));
+      }
       amountUnit = TimeUnit.MILLISECONDS;
       zeroMeansNever = !connectDate;
     } else if (value instanceof String) {
@@ -207,6 +222,10 @@ public final class RecordExpiry {
   }
 
   private static Instant parseIsoInstant(String value) {
+    // Only date-times have a T separator. Date-only strings are parsed in extended form.
+    if (value.indexOf('T') == 8) {
+      return OffsetDateTime.parse(value, BASIC_OFFSET_DATE_TIME).toInstant();
+    }
     try {
       return OffsetDateTime.parse(value).toInstant();
     } catch (DateTimeParseException e) {
