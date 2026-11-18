@@ -10,6 +10,7 @@ import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.Test;
 
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Date;
 import java.util.OptionalInt;
@@ -65,13 +66,40 @@ public class RecordExpiryTest {
         RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE).ttlSeconds(record, NOW_MILLIS));
   }
 
-  @Test(expected = DataException.class)
-  public void shouldRejectConnectDate() {
+  @Test
+  public void shouldReadConnectDateAtUtcMidnight() {
     Schema schema = SchemaBuilder.struct().field("expiresAt", org.apache.kafka.connect.data.Date.SCHEMA).build();
-    Struct value = new Struct(schema).put("expiresAt", new Date(86_400_000L));
+    Struct value = new Struct(schema).put("expiresAt", Date.from(Instant.parse("2023-11-15T00:00:00Z")));
     SinkRecord record = new SinkRecord("t", 0, null, null, schema, value, 7L);
 
-    RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE).ttlSeconds(record, NOW_MILLIS);
+    assertEquals(OptionalInt.of(6_400),
+        RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE).ttlSeconds(record, NOW_MILLIS));
+    assertEquals(OptionalInt.of(6_460),
+        RecordExpiry.of("value.expiresAt", "MILLISECONDS", 60, DELETE).ttlSeconds(record, NOW_MILLIS));
+
+    value.put("expiresAt", new Date(0));
+    assertEquals(OptionalInt.empty(),
+        RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE).ttlSeconds(record, NOW_MILLIS));
+  }
+
+  @Test
+  public void shouldReadIsoDatesAndOffsetDateTimesInAnyUnit() {
+    assertEquals(OptionalInt.of(6_400), ttl("SECONDS", 0, DELETE, "2023-11-15"));
+    assertEquals(OptionalInt.of(6_400), ttl("MILLISECONDS", 0, DELETE, "2023-11-15T00:00:00Z"));
+    assertEquals(OptionalInt.of(6_460), ttl("SECONDS", 60, DELETE, " 2023-11-15T05:30:00+05:30 "));
+    assertEquals(OptionalInt.of(2), ttl("SECONDS", 0, DELETE, "2023-11-14T22:13:21.000000001Z"));
+  }
+
+  @Test
+  public void shouldApplyExpiryPoliciesToIsoValues() {
+    assertEquals(OptionalInt.empty(), ttl("SECONDS", 0, SKIP, "2023-11-14"));
+    assertEquals(OptionalInt.empty(), ttl("SECONDS", 0, DELETE, "1970-01-01"));
+    DataException expired = assertThrows(DataException.class,
+        () -> ttl("SECONDS", 0, FAIL, "2023-11-14T22:13:20.500Z"));
+    assertTrue(expired.getMessage(), expired.getMessage().contains("expired"));
+    DataException negative = assertThrows(DataException.class,
+        () -> ttl("SECONDS", 0, DELETE, "1969-12-31T23:59:59.999999999Z"));
+    assertTrue(negative.getMessage(), negative.getMessage().contains("negative"));
   }
 
   @Test
@@ -92,6 +120,8 @@ public class RecordExpiryTest {
   public void shouldNeverExpireAtZero() {
     assertEquals(OptionalInt.of(0), ttl("SECONDS", 0, DELETE, 0L));
     assertEquals(OptionalInt.of(0), ttl("MILLISECONDS", 3_600, FAIL, 0));
+    assertEquals(OptionalInt.of(0), ttl("SECONDS", 3_600, FAIL, " 0 "));
+    assertEquals(OptionalInt.of(0), ttl("SECONDS", 3_600, FAIL, new Date(0)));
   }
 
   @Test
@@ -150,9 +180,12 @@ public class RecordExpiryTest {
   }
 
   @Test
-  public void shouldRejectNonIntegerField() {
-    DataException text = assertThrows(DataException.class, () -> ttl("SECONDS", 0, DELETE, "soon"));
-    assertTrue(text.getMessage(), text.getMessage().contains("is not an integer"));
+  public void shouldRejectInvalidExpiryValues() {
+    for (String invalid : new String[] {"soon", "2023-02-29", "2023-11-15T00:00:00", "+999999999-01-01"}) {
+      DataException text = assertThrows(DataException.class, () -> ttl("SECONDS", 0, DELETE, invalid));
+      assertTrue(text.getMessage(), text.getMessage().contains("topic 't' (partition 0, offset 7)"));
+      assertTrue(text.getMessage(), text.getMessage().contains("ISO-8601 date or offset date-time"));
+    }
     DataException decimal = assertThrows(DataException.class, () -> ttl("SECONDS", 0, DELETE, 1.7e9));
     assertTrue(decimal.getMessage(), decimal.getMessage().contains("must be an integer or a timestamp"));
   }

@@ -219,9 +219,12 @@ the sanitized name may be another subscribed topic.
   expiration time, and write timestamp of the record using the special properties ``__ttl``, ``__expiration``,
   and ``__timestamp``.
   ``__ttl`` must reference an Integer field containing a relative lifetime in seconds.
-  ``__expiration`` must reference a Kafka Timestamp, or a Unix epoch time as an integer (or a string holding one)
-  in the unit set by ``expirationUnit``, which it requires; an expiry of ``0``, in either form, means the record
-  never expires. Its path may step into nested structs or maps, as in ``__expiration=value.metadata.exp``.
+  ``__expiration`` accepts a Kafka Connect Timestamp or Date, an ISO-8601 string, or a Unix epoch time as an
+  integer or integer string in the unit set by ``expirationUnit``. A Date or an ISO-8601 date such as
+  ``2026-12-01`` expires at the start of that date in UTC. An ISO-8601 date-time must include ``Z`` or a UTC
+  offset, as in ``2026-12-01T09:30:00+05:30``.
+  A zero integer, integer string, or Kafka Connect Timestamp means the record never expires.
+  The path may step into nested structs or maps, as in ``__expiration=value.metadata.exp``.
   The connector calculates a per-record TTL from the absolute expiration time. A negative expiry, or a TTL above
   ScyllaDB's maximum of 20 years (630720000 seconds), fails the record: it goes to the errant record reporter under
   ``errors.tolerance``, or, without a reporter, ``behavior.on.error`` decides.
@@ -268,7 +271,7 @@ the sanitized name may be another subscribed topic.
   It has no default and is required whenever the mapping contains ``__expiration``, since integers read in the
   wrong unit may get a wrong TTL with no error, be treated as expired and by default delete their rows, or fail
   as too far in the future.
-  A Kafka Timestamp field still needs the setting, which it then ignores.
+  Kafka Connect Timestamp and Date values and ISO-8601 strings ignore the configured unit.
 
 ``topic.my_topic.my_ks.my_table.behaviorOnExpired``
 
