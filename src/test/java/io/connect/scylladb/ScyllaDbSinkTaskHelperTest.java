@@ -6,8 +6,11 @@ import com.datastax.oss.driver.api.core.cql.BoundStatement;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinition;
 import com.datastax.oss.driver.api.core.cql.ColumnDefinitions;
 import com.datastax.oss.driver.api.core.cql.PreparedStatement;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import com.datastax.oss.driver.api.core.cql.Statement;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.common.record.TimestampType;
+import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -17,19 +20,24 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_SELF;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -42,6 +50,11 @@ public class ScyllaDbSinkTaskHelperTest {
   static final Schema VALUE_SCHEMA = SchemaBuilder.struct().name("value")
       .field("id", Schema.INT64_SCHEMA)
       .field("name", Schema.STRING_SCHEMA)
+      .field("time", Schema.INT32_SCHEMA)
+      .build();
+  // A delete flagged in the value carries no written fields, only change metadata.
+  static final Schema FLAGGED_SCHEMA = SchemaBuilder.struct().name("flagged")
+      .field("op", Schema.STRING_SCHEMA)
       .field("time", Schema.INT32_SCHEMA)
       .build();
 
@@ -81,6 +94,27 @@ public class ScyllaDbSinkTaskHelperTest {
   static SinkRecord write(String topic, long id) {
     Struct value = new Struct(VALUE_SCHEMA).put("id", id).put("name", "n").put("time", 100);
     return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), VALUE_SCHEMA, value, 1L, 1000L, null);
+  }
+
+  static SinkRecord flagged(String topic, long id, String op) {
+    Struct value = new Struct(FLAGGED_SCHEMA).put("op", op).put("time", 100);
+    return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), FLAGGED_SCHEMA, value, 3L, 1000L, null);
+  }
+
+  static SinkRecord write(String topic, long id, int time) {
+    Struct value = new Struct(VALUE_SCHEMA).put("id", id).put("name", "n").put("time", time);
+    return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), VALUE_SCHEMA, value, 1L, 1000L, null);
+  }
+
+  // A record of an older value schema, in which name was a number.
+  static SinkRecord intName(String topic, long id, int time) {
+    Schema schema = SchemaBuilder.struct().name("value")
+        .field("id", Schema.INT64_SCHEMA)
+        .field("name", Schema.INT32_SCHEMA)
+        .field("time", Schema.INT32_SCHEMA)
+        .build();
+    Struct value = new Struct(schema).put("id", id).put("name", 7).put("time", time);
+    return new SinkRecord(topic, 0, KEY_SCHEMA, key(id), schema, value, 1L, 1000L, null);
   }
 
   static SinkRecord tombstone(String topic, long id) {
@@ -149,6 +183,26 @@ public class ScyllaDbSinkTaskHelperTest {
     helper().getBoundStatementForRecord(write(TOPIC, 1L));
 
     verify(statement).setQueryTimestamp(100_000_000L);
+  }
+
+  @Test
+  public void shouldUseKafkaOffsetForTombstonesAtConnectorLevel() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "kafka.offset");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(2L);
+  }
+
+  @Test
+  public void shouldUseKafkaOffsetAtTopicLevelOverConnectorTimestampField() {
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.time");
+    settings.put("topic.a.b-c.ks1.t1.timestampField", "kafka.offset");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(statement).setQueryTimestamp(1L);
   }
 
   @Test(expected = DataException.class)
@@ -292,5 +346,397 @@ public class ScyllaDbSinkTaskHelperTest {
 
     assertNull(helper().getBoundStatementForRecord(tombstone));
     verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldSkipLeadingTombstoneWithLegacyTimestampMappingForMissingTable() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __timestamp=value.id");
+    when(session.tableExists(anyString(), anyString())).thenReturn(false);
+    SinkRecord tombstone = new SinkRecord(TOPIC, 0, KEY_SCHEMA, key(1L), null, null, 2L, null,
+            TimestampType.NO_TIMESTAMP_TYPE);
+
+    // The tombstone maps the legacy timestamp, whose fallback needs the Kafka timestamp it lacks.
+    assertNull(helper().getBoundStatementForRecord(tombstone));
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  void flagDeletes() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_FIELD_CONFIG, "value.op");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_VALUES_CONFIG, "delete");
+  }
+
+  @Test
+  public void shouldDeleteRecordFlaggedInValue() {
+    flagDeletes();
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+
+    verify(session).delete("scylladb", "a_b_c");
+    verify(converter).convert(any(), any(), eq(ScyllaDbConstants.DELETE_OPERATION));
+    verify(session, never()).insert(anyString(), anyString(), any());
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+  }
+
+  @Test
+  public void shouldWriteRecordWithOtherFlagValue() {
+    flagDeletes();
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "write"));
+
+    verify(session).insert("scylladb", "a_b_c", null);
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldWriteRecordWithoutFlagField() {
+    flagDeletes();
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(session).insert("scylladb", "a_b_c", null);
+  }
+
+  @Test(expected = DataException.class)
+  public void shouldFailFlaggedDeleteWhenDeletesAreDisabled() {
+    flagDeletes();
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "false");
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+  }
+
+  @Test
+  public void shouldSkipFlaggedDeleteFromMissingTable() {
+    flagDeletes();
+    // The flagged value lacks it, so reading it before the table check would fail the record.
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.name");
+    when(session.tableExists("scylladb", "a_b_c")).thenReturn(false);
+
+    assertNull(helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete")));
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldTakeFlaggedDeleteTimestampFromValueField() {
+    flagDeletes();
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.time");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "SECONDS");
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+
+    verify(session).delete("scylladb", "a_b_c");
+    verify(statement).setQueryTimestamp(100_000_000L);
+  }
+
+  @Test
+  public void shouldCompleteValueMappingAfterLeadingFlaggedDelete() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, username=value.name, __ttl=value.time");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+    ScyllaDbSinkTaskHelper helper = helper();
+
+    helper.getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+    SinkRecord record = write(TOPIC, 2L);
+    helper.getBoundStatementForRecord(record);
+
+    verify(session).delete("ks1", "t1");
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(record), topicConfigs.capture());
+    assertEquals(Schema.STRING_SCHEMA,
+        topicConfigs.getValue().getTableColumnMap().get("name").getKafkaRecordField().schema());
+  }
+
+  @Test
+  public void shouldTakeLeadingFlaggedDeleteTimestampFromLegacyMapping() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, username=value.name, __timestamp=value.time");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "true");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+
+    helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete"));
+
+    verify(session).delete("ks1", "t1");
+    // The mapped field, in microseconds, not the Kafka record timestamp.
+    verify(statement).setQueryTimestamp(100L);
+  }
+
+  @Test
+  public void shouldNotReadMappedTtlFromFlaggedDelete() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, username=value.name, __ttl=value.time");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+    ScyllaDbSinkTaskHelper helper = helper();
+    Schema opOnly = SchemaBuilder.struct().name("op").field("op", Schema.STRING_SCHEMA).build();
+    SinkRecord delete = new SinkRecord(TOPIC, 0, KEY_SCHEMA, key(1L), opOnly,
+        new Struct(opOnly).put("op", "delete"), 3L, 1000L, null);
+
+    helper.getBoundStatementForRecord(write(TOPIC, 1L));
+    helper.getBoundStatementForRecord(delete);
+
+    verify(session).delete("ks1", "t1");
+  }
+
+  @Test
+  public void shouldDeleteRowOfRecordThatHasAlreadyExpired() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(session).delete("ks1", "t1");
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+    verify(session, never()).insert(anyString(), anyString(), any());
+    // At the record's own write timestamp, so a newer version already written survives.
+    verify(statement).setQueryTimestamp(1000L * 1000);
+  }
+
+  @Test
+  public void shouldDeleteRowOfRecordThatHasAlreadyExpiredWhenDeletesAreDisabled() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "false");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(session).delete("ks1", "t1");
+  }
+
+  @Test
+  public void shouldFailExpiredFlaggedDeleteWhenDeletesAreDisabled() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.deletesField", "value.op");
+    settings.put("topic.a.b-c.ks1.t1.deletesValues", "delete");
+    settings.put("topic.a.b-c.ks1.t1.deletesEnabled", "false");
+
+    // A delete whatever its expiry, so deletesEnabled decides, not behaviorOnExpired.
+    DataException e = assertThrows(DataException.class,
+        () -> helper().getBoundStatementForRecord(flagged(TOPIC, 1L, "delete")));
+    assertTrue(e.getMessage(), e.getMessage().contains("deletesEnabled"));
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldNameBehaviorOnExpiredWhenKeyOfExpiredRecordLacksThePrimaryKey() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=value.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    RecordToBoundStatementConverter.State empty = new RecordToBoundStatementConverter.State(statement);
+    when(converter.convert(any(), any(), anyString())).thenReturn(empty);
+
+    DataException ex = assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("behaviorOnExpired=SKIP"));
+  }
+
+  @Test
+  public void shouldNameBehaviorOnExpiredWhenKeyOfExpiredRecordLeavesPrimaryKeyColumnUnbound() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    // The prepared delete has markers for id and region; the key binds only id.
+    ColumnDefinition region = mock(ColumnDefinition.class);
+    when(region.getName()).thenReturn(CqlIdentifier.fromInternal("region"));
+    when(variables.size()).thenReturn(2);
+    when(variables.get(1)).thenReturn(region);
+    when(statement.isSet(0)).thenReturn(true);
+
+    DataException ex = assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("[region]"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("behaviorOnExpired=SKIP"));
+  }
+
+  @Test
+  public void shouldSkipRecordThatHasAlreadyExpiredForMissingTable() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    when(session.tableExists(anyString(), anyString())).thenReturn(false);
+
+    assertNull(helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+
+    verify(session, never()).delete(anyString(), anyString());
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+  }
+
+  @Test
+  public void shouldSkipRecordThatHasAlreadyExpiredWhenSetToSkip() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", "SKIP");
+
+    assertNull(helper().getBoundStatementForRecord(write(TOPIC, 1L)));
+
+    verify(session, never()).createOrAlterTable(anyString(), anyString(), any(), any());
+    verify(session, never()).insert(anyString(), anyString(), any());
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldFailRecordThatHasAlreadyExpiredWhenSetToFail() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", "FAIL");
+    ScyllaDbSinkTaskHelper helper = helper();
+
+    DataException e = assertThrows(DataException.class, () -> helper.getBoundStatementForRecord(write(TOPIC, 1L)));
+    assertTrue(e.getMessage(), e.getMessage().contains("expired"));
+  }
+
+  @Test
+  public void shouldTakeColumnTypesFromLiveRecordAfterSkippedExpiredRecord() {
+    assertColumnTypesFromLiveRecordAfterExpiredRecord("SKIP");
+    verify(session, never()).delete(anyString(), anyString());
+  }
+
+  @Test
+  public void shouldTakeColumnTypesFromLiveRecordAfterDeletedExpiredRecord() {
+    assertColumnTypesFromLiveRecordAfterExpiredRecord("DELETE");
+    verify(session).delete("ks1", "t1");
+  }
+
+  // Only a record written as an insert completes the mapping: the expired one is skipped or deleted, so its
+  // types must not reach the table the connector creates.
+  private void assertColumnTypesFromLiveRecordAfterExpiredRecord(String behaviorOnExpired) {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", behaviorOnExpired);
+    ScyllaDbSinkTaskHelper helper = helper();
+    final int expiresAt = (int) (System.currentTimeMillis() / 1000) + 3600;
+
+    helper.getBoundStatementForRecord(intName(TOPIC, 1L, 100));
+    SinkRecord live = write(TOPIC, 2L, expiresAt);
+    helper.getBoundStatementForRecord(live);
+
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(live), topicConfigs.capture());
+    String create = ddl(null, live, topicConfigs.getValue());
+    assertTrue(create, create.contains("name text"));
+    // The mapped columns only: the expiry field is not a column.
+    assertFalse(create, create.contains("time"));
+    // A table with the key only gets the column added.
+    TableMetadata.Table keyOnly = mock(TableMetadata.Table.class);
+    when(keyOnly.primaryKey()).thenReturn(Collections.singletonList(mock(TableMetadata.Column.class)));
+    String add = ddl(keyOnly, live, topicConfigs.getValue());
+    assertTrue(add, add.endsWith("ADD name text"));
+  }
+
+  // The statement the schema builder executes for the record against the given table, or a missing one.
+  private String ddl(TableMetadata.Table table, SinkRecord record, TopicConfigs topicConfigs) {
+    ScyllaDbSession ddlSession = mock(ScyllaDbSession.class);
+    when(ddlSession.tableMetadata("ks1", "t1")).thenReturn(table);
+    new ScyllaDbSchemaBuilder(ddlSession, new ScyllaDbSinkConnectorConfig(settings))
+        .build("ks1", "t1", record, topicConfigs);
+    ArgumentCaptor<Statement> ddl = ArgumentCaptor.forClass(Statement.class);
+    verify(ddlSession).executeStatement(ddl.capture());
+    return ((SimpleStatement) ddl.getValue()).getQuery();
+  }
+
+  @Test
+  public void shouldTakeColumnTypesFromNextRecordWhenTheFirstFails() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name");
+    ScyllaDbSinkTaskHelper helper = helper();
+    // As when the first record's table cannot be created, for a field type no column can hold.
+    SinkRecord failing = intName(TOPIC, 1L, 100);
+    doThrow(new DataException("unsupported")).when(session)
+        .createOrAlterTable(eq("ks1"), eq("t1"), eq(failing), any());
+
+    assertThrows(DataException.class, () -> helper.getBoundStatementForRecord(failing));
+    SinkRecord next = write(TOPIC, 2L);
+    helper.getBoundStatementForRecord(next);
+
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(next), topicConfigs.capture());
+    String create = ddl(null, next, topicConfigs.getValue());
+    assertTrue(create, create.contains("name text"));
+  }
+
+  @Test
+  public void shouldKeepColumnTypesWhenALaterRecordFails() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name");
+    ScyllaDbSinkTaskHelper helper = helper();
+    helper.getBoundStatementForRecord(write(TOPIC, 1L));
+    SinkRecord failing = intName(TOPIC, 2L, 100);
+    doThrow(new DataException("unsupported")).when(session)
+        .createOrAlterTable(eq("ks1"), eq("t1"), eq(failing), any());
+
+    assertThrows(DataException.class, () -> helper.getBoundStatementForRecord(failing));
+    // The first insert decided the types, so a failing record later must not reopen them.
+    SinkRecord next = intName(TOPIC, 3L, 100);
+    helper.getBoundStatementForRecord(next);
+
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(next), topicConfigs.capture());
+    String create = ddl(null, next, topicConfigs.getValue());
+    assertTrue(create, create.contains("name text"));
+  }
+
+  @Test
+  public void shouldNotKeepHeaderColumnOfSkippedExpiredRecord() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, src=header.src, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", "SKIP");
+    ScyllaDbSinkTaskHelper helper = helper();
+    SinkRecord expired = write(TOPIC, 1L, 100);
+    expired.headers().addInt("src", 1);
+
+    helper.getBoundStatementForRecord(expired);
+    // A header is mapped only when the record carries it, so the next record must not inherit it.
+    SinkRecord live = write(TOPIC, 2L, (int) (System.currentTimeMillis() / 1000) + 3600);
+    helper.getBoundStatementForRecord(live);
+
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(live), topicConfigs.capture());
+    assertEquals(Collections.singleton("name"), topicConfigs.getValue().getTableColumnMap().keySet());
+  }
+
+  @Test
+  public void shouldFailExpiredRecordMissingAMappedField() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    settings.put("topic.a.b-c.ks1.t1.behaviorOnExpired", "SKIP");
+    Schema noName = SchemaBuilder.struct().name("value").field("time", Schema.INT32_SCHEMA).build();
+    SinkRecord expired = new SinkRecord(TOPIC, 0, KEY_SCHEMA, key(1L), noName,
+        new Struct(noName).put("time", 100), 1L, 1000L, null);
+
+    // Until a record is written as an insert, the mapping is resolved before the expiry decides, so a
+    // skipped record is still checked against it.
+    DataException e = assertThrows(DataException.class, () -> helper().getBoundStatementForRecord(expired));
+    assertTrue(e.getMessage(), e.getMessage().contains("name"));
+  }
+
+  @Test
+  public void shouldDeleteExpiredRecordByRenamedKeyBeforeAnyWrite() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "userid=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    // A real delete converter, prepared with a marker for the primary key column userid only.
+    PreparedStatement prepared = statement.getPreparedStatement();
+    when(prepared.bind()).thenReturn(statement);
+    when(variables.contains("userid")).thenReturn(true);
+    when(session.delete("ks1", "t1")).thenReturn(new RecordToBoundStatementConverter(prepared));
+    ScyllaDbSinkTaskHelper helper = helper();
+
+    // The expired record leaves the mapping incomplete, and its delete must still bind the renamed key.
+    helper.getBoundStatementForRecord(write(TOPIC, 1L, 100));
+    verify(statement).setLong("userid", 1L);
+    verify(statement, never()).setLong(eq("id"), anyLong());
+
+    SinkRecord live = write(TOPIC, 2L, (int) (System.currentTimeMillis() / 1000) + 3600);
+    helper.getBoundStatementForRecord(live);
+    ArgumentCaptor<TopicConfigs> topicConfigs = ArgumentCaptor.forClass(TopicConfigs.class);
+    verify(session).createOrAlterTable(eq("ks1"), eq("t1"), eq(live), topicConfigs.capture());
+    assertEquals("userid", topicConfigs.getValue().getTablePartitionKeyMap().get("id").getScyllaColumnName());
+  }
+
+  @Test
+  public void shouldBindTtlOfEachRecord() {
+    settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
+    settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    ScyllaDbSinkTaskHelper helper = helper();
+    final int expiresAt = (int) (System.currentTimeMillis() / 1000) + 3600;
+
+    helper.getBoundStatementForRecord(write(TOPIC, 1L, expiresAt));
+    // A record that never expires must not keep the TTL of the one before.
+    helper.getBoundStatementForRecord(write(TOPIC, 2L, 0));
+
+    ArgumentCaptor<Integer> ttl = ArgumentCaptor.forClass(Integer.class);
+    verify(statement, times(2)).setInt(eq(ScyllaDbConstants.TTL_BIND_MARKER), ttl.capture());
+    assertEquals(3600, ttl.getAllValues().get(0), 1);
+    assertEquals(Integer.valueOf(0), ttl.getAllValues().get(1));
   }
 }

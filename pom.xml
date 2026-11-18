@@ -5,7 +5,7 @@
     <groupId>com.scylladb</groupId>
     <artifactId>kafka-connect-scylladb</artifactId>
     <name>kafka-connect-scylladb</name>
-    <version>1.1.12-SNAPSHOT</version>
+    <version>1.1.13-SNAPSHOT</version>
     <description>A Kafka Connect plugin for ScyllaDB</description>
     <url>https://github.com/scylla/kafka-connect-scylladb</url>
     <inceptionYear>2020</inceptionYear>
@@ -380,7 +380,7 @@
             <groupId>at.yawk.lz4</groupId>
             <artifactId>lz4-java</artifactId>
             <!-- should match version from drivers POM -->
-            <version>1.14.0</version>
+            <version>1.14.1</version>
         </dependency>
 
         <dependency>

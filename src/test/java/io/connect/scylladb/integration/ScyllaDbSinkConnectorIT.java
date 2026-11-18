@@ -172,13 +172,83 @@ public class ScyllaDbSinkConnectorIT {
   }
 
   @Test
+  public void equalKafkaTimestampsLeaveReinsertHiddenByDelete() {
+    // Reproduce issue #20 with the unchanged default; kafka.offset is an opt-in ordering fix.
+    String topic = "equal_kafka_timestamps";
+    Map<String, String> settings = timestampSettings(topic);
+    this.task.start(settings);
+    this.task.put(Arrays.asList(timestampRecord(topic, 998L, 0L),
+        timestampRecord(topic, 999L, null), timestampRecord(topic, 1000L, 1L)));
+
+    assertTrue(executeSelect("SELECT * FROM " + topic).isEmpty());
+  }
+
+  @Test
+  public void kafkaOffsetsOrderSameMillisecondWritesAcrossRestartAndReplay() {
+    String topic = "kafka_offset_timestamps";
+    Map<String, String> settings = timestampSettings(topic);
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "kafka.offset");
+    this.task.start(settings);
+    // More than 1000 events for one row in one millisecond, crossing the 999/1000 boundary.
+    List<SinkRecord> records = new ArrayList<>();
+    for (int i = 0; i < 1002; i++) {
+      records.add(timestampRecord(topic, 998L + i, i % 3 == 1 ? null : (long) (i % 3)));
+    }
+    this.task.put(records);
+    assertOffsetRow(topic, 1999L);
+
+    this.task.stop();
+    this.task = new ScyllaDbSinkTask();
+    this.task.initialize(this.sinkTaskContext);
+    this.task.start(settings);
+    // A replayed prefix must not override the final insert, even if it ends with a delete.
+    this.task.put(records.subList(0, 2));
+    assertOffsetRow(topic, 1999L);
+    this.task.put(records);
+    assertOffsetRow(topic, 1999L);
+
+    this.task.put(Collections.singletonList(timestampRecord(topic, 2000L, null)));
+    this.task.put(records);
+    assertTrue(executeSelect("SELECT * FROM " + topic).isEmpty());
+  }
+
+  private Map<String, String> timestampSettings(String topic) {
+    try (CqlSession session = sessionBuilder().build()) {
+      session.execute("CREATE KEYSPACE IF NOT EXISTS " + SCYLLADB_KEYSPACE
+          + " WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 1}");
+      session.execute("DROP TABLE IF EXISTS " + SCYLLADB_KEYSPACE + "." + topic);
+      // Keep tombstones throughout replay: RF1 with repair-based GC may purge them during compaction.
+      session.execute("CREATE TABLE " + SCYLLADB_KEYSPACE + "." + topic
+          + " (id bigint PRIMARY KEY, v bigint) WITH tombstone_gc = {'mode': 'disabled'}");
+    }
+    Map<String, String> settings = settings();
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.ENABLE_OFFSET_STORAGE_TABLE, "false");
+    settings.put(ScyllaDbSinkConnectorConfig.BEHAVIOR_ON_ERROR_CONFIG, "FAIL");
+    return settings;
+  }
+
+  private static SinkRecord timestampRecord(String topic, long offset, Long value) {
+    return new SinkRecord(topic, 0, null, Collections.singletonMap("id", 1L), null,
+        value == null ? null : ImmutableMap.of("id", 1L, "v", value), offset,
+        1_700_000_000_000L, TimestampType.CREATE_TIME);
+  }
+
+  private void assertOffsetRow(String topic, long offset) {
+    List<Row> rows = executeSelect("SELECT v, writetime(v) AS wt FROM " + topic + " WHERE id = 1");
+    assertEquals(1, rows.size());
+    assertEquals(2L, rows.get(0).getLong("v"));
+    assertEquals(offset, rows.get(0).getLong("wt"));
+  }
+
+  @Test
   public void insert() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
     final String topic = "insertTesting";
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 3)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 3)));
     List<SinkRecord> finalRecordsList = new ArrayList<>();
     for (int i = 0; i< 1000; i++) {
       List<SinkRecord> records = ImmutableList.of(
@@ -220,7 +290,6 @@ public class ScyllaDbSinkConnectorIT {
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -236,8 +305,8 @@ public class ScyllaDbSinkConnectorIT {
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
     final String topic = "insertTestingWithMapping";
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 3)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 3)));
     List<SinkRecord> records = ImmutableList.of(
             write(
                     topic,
@@ -278,7 +347,6 @@ public class ScyllaDbSinkConnectorIT {
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -322,13 +390,12 @@ public class ScyllaDbSinkConnectorIT {
       );
     }
 
-    when(this.sinkTaskContext.assignment()).thenReturn(assignment);
     this.task.start(settings);
+    this.task.open(assignment);
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -373,13 +440,12 @@ public class ScyllaDbSinkConnectorIT {
     this.validations = records.stream()
             .map(RowValidator::of)
             .collect(Collectors.toList());
-    when(this.sinkTaskContext.assignment()).thenReturn(assignment);
     this.task.start(settings);
+    this.task.open(assignment);
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -430,13 +496,12 @@ public class ScyllaDbSinkConnectorIT {
       );
     }
 
-    when(this.sinkTaskContext.assignment()).thenReturn(assignment);
     this.task.start(settings);
+    this.task.open(assignment);
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -486,13 +551,12 @@ public class ScyllaDbSinkConnectorIT {
       );
     }
 
-    when(this.sinkTaskContext.assignment()).thenReturn(assignment);
     this.task.start(settings);
+    this.task.open(assignment);
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -533,13 +597,12 @@ public class ScyllaDbSinkConnectorIT {
             RowValidator.of(topic, key, value)
     );
 
-    when(this.sinkTaskContext.assignment()).thenReturn(assignment);
     this.task.start(settings);
+    this.task.open(assignment);
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -594,13 +657,12 @@ public class ScyllaDbSinkConnectorIT {
             + "PRIMARY KEY(id)"
             + ")");
 
-    when(this.sinkTaskContext.assignment()).thenReturn(assignment);
     this.task.start(settings);
+    this.task.open(assignment);
     this.task.put(records);
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -609,8 +671,8 @@ public class ScyllaDbSinkConnectorIT {
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
     final String topic = "deleteMissingTable";
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 1)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 1)));
     task.put(
             ImmutableList.of(
                     SinkRecordUtil.delete(
@@ -621,7 +683,6 @@ public class ScyllaDbSinkConnectorIT {
                     )
             )
     );
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -630,8 +691,8 @@ public class ScyllaDbSinkConnectorIT {
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
     final String topic = "deleteNullValueRowTesting";
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 1)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 1)));
 
     task.put(
             ImmutableList.of(
@@ -665,7 +726,6 @@ public class ScyllaDbSinkConnectorIT {
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(2)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
   }
 
   @Test
@@ -675,9 +735,9 @@ public class ScyllaDbSinkConnectorIT {
     connector.start(settings);
     final String topic = "tableExistsNoChange";
     final TopicPartition topicPartition = new TopicPartition(topic, 1);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
 
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(topicPartition));
     task.put(
             ImmutableList.of(
                     write(
@@ -719,9 +779,9 @@ public class ScyllaDbSinkConnectorIT {
     connector.start(settings);
     final String topic = "tableExistsAlter";
     final TopicPartition topicPartition = new TopicPartition(topic, 1);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
 
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(topicPartition));
     task.put(
             ImmutableList.of(
                     write(
@@ -766,9 +826,9 @@ public class ScyllaDbSinkConnectorIT {
 
     final String topic = "tableMissingManageTableDisabled";
     final TopicPartition topicPartition = new TopicPartition(topic, 1);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
     settings.put(ScyllaDbSinkConnectorConfig.TABLE_MANAGE_ENABLED_CONFIG, "false");
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(topicPartition));
 
     ConnectException ex = assertThrows(ConnectException.class, () -> {
       this.task.put(
@@ -808,9 +868,9 @@ public class ScyllaDbSinkConnectorIT {
     connector.start(settings);
     final String topic = "tableExistsAlterManageTableDisabled";
     final TopicPartition topicPartition = new TopicPartition(topic, 1);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
 
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(topicPartition));
     task.put(
             ImmutableList.of(
                     write(
@@ -870,7 +930,6 @@ public class ScyllaDbSinkConnectorIT {
     connector.start(settings);
     final String topic = "offsetsExist";
     final TopicPartition topicPartition = new TopicPartition(topic, 1);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(topicPartition));
     ScyllaDbSinkConnectorConfig config = new ScyllaDbSinkConnectorConfig(settings);
     try (ScyllaDbSession session = new ScyllaDbSessionFactory().newSession(config)) {
       Map<TopicPartition, OffsetAndMetadata> offsets = ImmutableMap.of(
@@ -882,6 +941,7 @@ public class ScyllaDbSinkConnectorIT {
         .forEach(session::executeStatement);
     }
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(topicPartition));
     task.put(
             ImmutableList.of(
                     write(
@@ -911,7 +971,6 @@ public class ScyllaDbSinkConnectorIT {
     Boolean tableExists = IsOffsetStorageTableExists(SCYLLADB_OFFSET_TABLE);
     assertEquals(true, tableExists);
     verify(this.sinkTaskContext, times(2)).requestCommit();
-    verify(this.sinkTaskContext, times(1)).assignment();
     verify(this.sinkTaskContext, times(1)).offset(ImmutableMap.of(topicPartition, 123451234L));
   }
 
@@ -923,8 +982,8 @@ public class ScyllaDbSinkConnectorIT {
     connector.start(settings);
     settings.put("scylladb.ttl", "10");
     final String topic = "insertTestingttl";
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 1)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 1)));
     List<SinkRecord> records = ImmutableList.of(
             write(
                     topic,
@@ -984,8 +1043,8 @@ public class ScyllaDbSinkConnectorIT {
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
     final String topic = "insertTestingWithoutTtl";
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 1)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 1)));
     List<SinkRecord> records = ImmutableList.of(
             write(
                     topic,
@@ -1073,7 +1132,6 @@ public class ScyllaDbSinkConnectorIT {
     //scylladb.offset.storage.table does not exist.
     assertEquals(false, tableExists);
     verify(this.sinkTaskContext, times(1)).requestCommit();
-    verify(this.sinkTaskContext, times(0)).assignment();
   }
 
   @Test
@@ -1091,8 +1149,8 @@ public class ScyllaDbSinkConnectorIT {
     settings.put(prefix + "deletesEnabled", "true");
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 0)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 0)));
 
     this.task.put(ImmutableList.of(
             // The table does not exist yet, so this delete is skipped; the writes after it must still
@@ -1141,8 +1199,8 @@ public class ScyllaDbSinkConnectorIT {
     settings.put(ScyllaDbSinkConnectorConfig.BEHAVIOR_ON_ERROR_CONFIG, "IGNORE");
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 0)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 0)));
 
     // A DataException, which behavior.on.error ignores, rather than a server error retried forever.
     this.task.put(ImmutableList.of(SinkRecordUtil.delete(topic,
@@ -1175,8 +1233,8 @@ public class ScyllaDbSinkConnectorIT {
     settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_UNIT_CONFIG, "MILLISECONDS");
     connector = new ScyllaDbSinkConnector();
     connector.start(settings);
-    when(this.sinkTaskContext.assignment()).thenReturn(ImmutableSet.of(new TopicPartition(topic, 0)));
     this.task.start(settings);
+    this.task.open(ImmutableSet.of(new TopicPartition(topic, 0)));
 
     // All events share one Kafka timestamp, as in a burst of changes to one row within a millisecond.
     final SinkRecord insertA = timestamped(topic, 0, "a", 1_000L);
