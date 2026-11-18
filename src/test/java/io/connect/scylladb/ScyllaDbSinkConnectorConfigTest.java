@@ -69,13 +69,37 @@ public class ScyllaDbSinkConnectorConfigTest {
   }
 
   @Test
-  public void shouldRejectMappingEntryWithExtraEqualsSign() {
+  public void shouldRejectConflictingSourcesWhenFieldNameContainsEqualsSign() {
     String setting = "topic.a.ks1.t1.mapping";
     settings.put(setting, "userid=key.id=ignored,userid=value.id");
 
     ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
     assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
-    assertTrue(ex.getMessage(), ex.getMessage().contains("Invalid mapping entry 'userid=key.id=ignored'"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Column 'userid'"));
+  }
+
+  @Test
+  public void shouldAcceptEqualsSignInMappingSource() {
+    settings.put("topic.a.ks1.t1.mapping", "payload=value.a=b");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
+  }
+
+  @Test
+  public void shouldAcceptRepeatedSourceWithSurroundingWhitespace() {
+    settings.put("topic.a.ks1.t1.mapping", "userid=key.id,userid= key.id ");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
+  }
+
+  @Test
+  public void shouldRejectMappingEntryWithoutSource() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "userid=");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Invalid mapping entry 'userid='"));
   }
 
   @Test

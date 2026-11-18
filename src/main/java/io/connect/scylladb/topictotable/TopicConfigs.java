@@ -206,13 +206,13 @@ public class TopicConfigs {
   public static void validateMapping(String setting, String mapping) {
     Map<String, String> sourcesByColumn = new HashMap<>();
     for (String mappedEntry : mapping.split(",")) {
-      String[] columnNameMap = mappedEntry.split("=", -1);
-      if (columnNameMap.length != 2 || columnNameMap[0].trim().isEmpty() || columnNameMap[1].trim().isEmpty()) {
+      String[] columnNameMap = mappedEntry.split("=", 2);
+      String column = columnNameMap[0].trim();
+      String source = columnNameMap.length == 2 ? columnNameMap[1].trim() : "";
+      if (column.isEmpty() || source.isEmpty()) {
         throw new ConfigException(setting, mapping,
                 String.format("Invalid mapping entry '%s'. Expected column=recordField.", mappedEntry.trim()));
       }
-      String column = columnNameMap[0].trim();
-      String source = columnNameMap[1];
       String columnId = columnId(column);
       String previousSource = sourcesByColumn.putIfAbsent(columnId, source);
       if (previousSource != null && !previousSource.equals(source)) {
