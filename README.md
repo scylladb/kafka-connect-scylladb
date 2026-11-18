@@ -113,6 +113,9 @@ The only time you could see the effect of duplicate `INSERT` operations is if yo
 [Scylla CDC](https://docs.scylladb.com/using-scylla/cdc/) turned on. In the CDC log table you would see duplicate
 `INSERT` operations as separate CDC log rows. 
 
+The opt-in [`kafka.offset` write timestamp mode](documentation/CONFIG.md) requires
+a destination table without CDC and a compaction strategy that does not depend on wall-clock write timestamps.
+
 -----------------------
 Reporting Kafka Metrics
 -----------------------

@@ -371,11 +371,15 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
           + "(CQL USING TIMESTAMP) from, for both writes and deletes: 'key.<field>', 'value.<field>' "
           + "or 'header.<name>'. Nested fields are separated by dots, e.g. 'value.metadata.updated_at'; "
           + "a header name may contain dots, and the longest matching name wins. "
-          + "A record without the field fails. When empty, the Kafka record timestamp is used.";
+          + "A record without the field fails. 'kafka.offset' uses the full partition offset as a logical "
+          + "timestamp in microseconds, for both writes and tombstones; all events for a row must come "
+          + "from one topic-partition. Use a new table: offsets cannot be mixed with epoch timestamps. "
+          + "The destination must not use CDC or time-window compaction. "
+          + "When empty, the Kafka record timestamp is used.";
   public static final String TIMESTAMP_UNIT_CONFIG = "scylladb.timestamp.unit";
   private static final String TIMESTAMP_UNIT_DEFAULT = "MICROSECONDS";
   private static final String TIMESTAMP_UNIT_DOC = "Unit of the integer in scylladb.timestamp.field, one of "
-          + String.join(", ", WriteTimestamp.UNITS) + ". Timestamp-typed fields ignore it.";
+          + String.join(", ", WriteTimestamp.UNITS) + ". Timestamp-typed fields and kafka.offset ignore it.";
 
   public static final String DELETES_FIELD_CONFIG = "scylladb.deletes.field";
   private static final String DELETES_FIELD_DOC = "Record field that marks a record with a value as a "

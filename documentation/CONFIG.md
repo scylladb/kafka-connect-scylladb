@@ -372,12 +372,35 @@ the sanitized name may be another subscribed topic.
   A record whose field is missing or null fails: it goes to the errant record reporter under ``errors.tolerance``,
   or, without a reporter, ``behavior.on.error`` decides. A delete reads its field only once its table is known
   to exist, so a delete from a missing table is skipped whatever its field holds.
-  Tombstones have no value, so they need a ``key.`` or ``header.`` field. Prefer ``header.``: a table the
+  Tombstones have no value, so they need a ``key.`` or ``header.`` field, or ``kafka.offset``. For a field
+  carried by the record, prefer ``header.``: a table the
   connector creates without a ``mapping`` puts every key field into the primary key, so with ``key.`` each event
   would get its own row.
   Use ``key.`` only when the table already exists or the field is meant to be part of the key.
   When empty, the Kafka record timestamp is used. It has millisecond precision, so events for one row within the
   same millisecond get equal timestamps and may be applied out of order, with a delete winning a tie.
+
+  Set this to ``kafka.offset`` to order writes and deletes by their full Kafka partition offset instead.
+  The offset is used directly as a logical timestamp in microseconds; ``scylladb.timestamp.unit`` is ignored.
+  This avoids same-millisecond ties and keeps the same timestamp on retries and after a task restart,
+  including when offsets cross 999 to 1000 or more than 1000 records share a millisecond.
+  It also works for tombstones and records without a Kafka timestamp. For example:
+
+      scylladb.timestamp.field=kafka.offset
+      scylladb.deletes.enabled=true
+
+  All events for a database row must come from the same topic-partition, with later offsets representing
+  later changes. Offsets from different topics or partitions are not comparable. Keep the partitioning stable:
+  recreating a topic or moving a key to another partition restarts its offset sequence.
+  Use a new, empty destination table and keep other writers out of it. Offset timestamps are not epoch times,
+  so existing rows or tombstones written with epoch timestamps may take precedence over offset-based writes.
+  Switching back to epoch timestamps also requires rebuilding the destination. ``WRITETIME`` returns the offset,
+  not the event's wall-clock time. The TTL and tombstone retention limits below still apply.
+
+  Do not enable CDC on the destination table with ``kafka.offset``: ScyllaDB cannot log writes whose
+  timestamps predate its CDC stream generations. Avoid Time Window Compaction Strategy (TWCS) for this mode:
+  its windows use write timestamps, so offsets place data into windows unrelated to event time, often a
+  single window near 1970. Use a compaction strategy that does not depend on wall-clock write timestamps.
 
   ScyllaDB orders the writes to one row by their write timestamps alone; the connector sends them concurrently.
   A timestamp from the source makes redelivered events idempotent: an older write or delete cannot override
@@ -399,7 +422,8 @@ the sanitized name may be another subscribed topic.
 
 ``scylladb.timestamp.unit``
 
-  The unit of the integer in ``scylladb.timestamp.field``. Fields of the Kafka Connect ``Timestamp`` type ignore it;
+  The unit of the integer in ``scylladb.timestamp.field``. ``kafka.offset`` and fields of the Kafka Connect
+  ``Timestamp`` type ignore it;
   ``Date`` and ``Time`` fields are rejected, since they hold no point in time. A value that does not fit in
   microseconds fails the record; ``NANOSECONDS`` are truncated to microseconds.
 

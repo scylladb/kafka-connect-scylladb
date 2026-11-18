@@ -172,6 +172,76 @@ public class ScyllaDbSinkConnectorIT {
   }
 
   @Test
+  public void equalKafkaTimestampsLeaveReinsertHiddenByDelete() {
+    // Reproduce issue #20 with the unchanged default; kafka.offset is an opt-in ordering fix.
+    String topic = "equal_kafka_timestamps";
+    Map<String, String> settings = timestampSettings(topic);
+    this.task.start(settings);
+    this.task.put(Arrays.asList(timestampRecord(topic, 998L, 0L),
+        timestampRecord(topic, 999L, null), timestampRecord(topic, 1000L, 1L)));
+
+    assertTrue(executeSelect("SELECT * FROM " + topic).isEmpty());
+  }
+
+  @Test
+  public void kafkaOffsetsOrderSameMillisecondWritesAcrossRestartAndReplay() {
+    String topic = "kafka_offset_timestamps";
+    Map<String, String> settings = timestampSettings(topic);
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "kafka.offset");
+    this.task.start(settings);
+    // More than 1000 events for one row in one millisecond, crossing the 999/1000 boundary.
+    List<SinkRecord> records = new ArrayList<>();
+    for (int i = 0; i < 1002; i++) {
+      records.add(timestampRecord(topic, 998L + i, i % 3 == 1 ? null : (long) (i % 3)));
+    }
+    this.task.put(records);
+    assertOffsetRow(topic, 1999L);
+
+    this.task.stop();
+    this.task = new ScyllaDbSinkTask();
+    this.task.initialize(this.sinkTaskContext);
+    this.task.start(settings);
+    // A replayed prefix must not override the final insert, even if it ends with a delete.
+    this.task.put(records.subList(0, 2));
+    assertOffsetRow(topic, 1999L);
+    this.task.put(records);
+    assertOffsetRow(topic, 1999L);
+
+    this.task.put(Collections.singletonList(timestampRecord(topic, 2000L, null)));
+    this.task.put(records);
+    assertTrue(executeSelect("SELECT * FROM " + topic).isEmpty());
+  }
+
+  private Map<String, String> timestampSettings(String topic) {
+    try (CqlSession session = sessionBuilder().build()) {
+      session.execute("CREATE KEYSPACE IF NOT EXISTS " + SCYLLADB_KEYSPACE
+          + " WITH replication = {'class': 'NetworkTopologyStrategy', 'datacenter1': 1}");
+      session.execute("DROP TABLE IF EXISTS " + SCYLLADB_KEYSPACE + "." + topic);
+      // Keep tombstones throughout replay: RF1 with repair-based GC may purge them during compaction.
+      session.execute("CREATE TABLE " + SCYLLADB_KEYSPACE + "." + topic
+          + " (id bigint PRIMARY KEY, v bigint) WITH tombstone_gc = {'mode': 'disabled'}");
+    }
+    Map<String, String> settings = settings();
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.ENABLE_OFFSET_STORAGE_TABLE, "false");
+    settings.put(ScyllaDbSinkConnectorConfig.BEHAVIOR_ON_ERROR_CONFIG, "FAIL");
+    return settings;
+  }
+
+  private static SinkRecord timestampRecord(String topic, long offset, Long value) {
+    return new SinkRecord(topic, 0, null, Collections.singletonMap("id", 1L), null,
+        value == null ? null : ImmutableMap.of("id", 1L, "v", value), offset,
+        1_700_000_000_000L, TimestampType.CREATE_TIME);
+  }
+
+  private void assertOffsetRow(String topic, long offset) {
+    List<Row> rows = executeSelect("SELECT v, writetime(v) AS wt FROM " + topic + " WHERE id = 1");
+    assertEquals(1, rows.size());
+    assertEquals(2L, rows.get(0).getLong("v"));
+    assertEquals(offset, rows.get(0).getLong("wt"));
+  }
+
+  @Test
   public void insert() {
     final Map<String, String> settings = settings();
     connector = new ScyllaDbSinkConnector();
