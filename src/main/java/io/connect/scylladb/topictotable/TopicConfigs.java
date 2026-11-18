@@ -203,6 +203,25 @@ public class TopicConfigs {
     }
   }
 
+  public static void validateMapping(String setting, String mapping) {
+    Map<String, String> sourcesByColumn = new HashMap<>();
+    for (String mappedEntry : mapping.split(",")) {
+      String[] columnNameMap = mappedEntry.split("=", 2);
+      String column = columnNameMap[0].trim();
+      String source = columnNameMap.length == 2 ? columnNameMap[1].trim() : "";
+      if (column.isEmpty() || source.isEmpty()) {
+        throw new ConfigException(setting, mapping,
+                String.format("Invalid mapping entry '%s'. Expected column=recordField.", mappedEntry.trim()));
+      }
+      String columnId = columnId(column);
+      String previousSource = sourcesByColumn.putIfAbsent(columnId, source);
+      if (previousSource != null && !previousSource.equals(source)) {
+        throw new ConfigException(setting, mapping,
+                String.format("Column '%s' is mapped from both '%s' and '%s'.", columnId, previousSource, source));
+      }
+    }
+  }
+
   // Reports an invalid setting under its full name, as in topic.my_topic.ks.table.expirationUnit.
   private static <T> T checkSetting(Map<String, String> names, String suffix, String value, Function<String, T> parse) {
     try {
