@@ -102,11 +102,21 @@ public class RecordExpiryTest {
   }
 
   @Test
-  public void shouldReadBasicIsoDateTimesAndKeepDigitOnlyDatesAsEpochValues() {
+  public void shouldReadBasicIsoDateTimes() {
     assertEquals(OptionalInt.of(6_400), ttl("MILLISECONDS", 0, DELETE, "20231115T000000Z"));
     assertEquals(OptionalInt.of(6_400), ttl("SECONDS", 0, DELETE, "20231114T190000-0500"));
     assertEquals(OptionalInt.of(2), ttl("SECONDS", 0, DELETE, "20231114T221321.000000001Z"));
-    assertEquals(ttl("SECONDS", 0, DELETE, 20_261_201L), ttl("SECONDS", 0, DELETE, "20261201"));
+    long nowMillis = Instant.parse("2026-12-01T03:59:59Z").toEpochMilli();
+    assertEquals(OptionalInt.of(1),
+        RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE)
+            .ttlSeconds(record("20261201T0930+0530"), nowMillis));
+  }
+
+  @Test
+  public void shouldReadDigitOnlyDateStringAsEpochSeconds() {
+    assertEquals(OptionalInt.of(1),
+        RecordExpiry.of("value.expiresAt", "SECONDS", 0, DELETE)
+            .ttlSeconds(record("20261201"), 20_261_200_000L));
   }
 
   @Test
@@ -201,7 +211,7 @@ public class RecordExpiryTest {
   @Test
   public void shouldRejectInvalidExpiryValues() {
     for (String invalid : new String[] {"soon", "2023-02-29", "2023-11-15T00:00:00",
-        "20231115T000000", "20230229T000000Z", "+999999999-01-01"}) {
+        "20231115T000000", "20231115T0000", "20231115T000000.Z", "20230229T000000Z", "+999999999-01-01"}) {
       DataException text = assertThrows(DataException.class, () -> ttl("SECONDS", 0, DELETE, invalid));
       assertTrue(text.getMessage(), text.getMessage().contains("topic 't' (partition 0, offset 7)"));
       assertTrue(text.getMessage(), text.getMessage().contains("ISO-8601 date or offset date-time"));

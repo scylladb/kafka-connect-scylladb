@@ -53,8 +53,13 @@ public final class RecordExpiry {
 
   private static final String LABEL = "Expiration field";
   private static final DateTimeFormatter BASIC_OFFSET_DATE_TIME = new DateTimeFormatterBuilder()
-      .appendPattern("uuuuMMdd'T'HHmmss")
-      .appendFraction(ChronoField.NANO_OF_SECOND, 0, 9, true)
+      .appendPattern("uuuuMMdd'T'HHmm")
+      .optionalStart()
+      .appendPattern("ss")
+      .optionalStart()
+      .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
+      .optionalEnd()
+      .optionalEnd()
       .appendOffset("+HHmm", "Z")
       .toFormatter(Locale.ROOT)
       .withResolverStyle(ResolverStyle.STRICT);
