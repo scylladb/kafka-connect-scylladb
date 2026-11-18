@@ -54,6 +54,34 @@ public class WriteTimestampTest {
   }
 
   @Test
+  public void shouldUseFullKafkaOffsetForWritesAndTombstonesRegardlessOfUnit() {
+    for (String unit : WriteTimestamp.UNITS) {
+      WriteTimestamp timestamp = WriteTimestamp.of(" kafka.offset ", unit);
+      for (long offset : new long[] {0L, 999L, 1000L, 1001L, Long.MAX_VALUE}) {
+        for (Object value : new Object[] {value(3L), null}) {
+          SinkRecord record = new SinkRecord("t", 0, null, null, null, value, offset,
+              null, null);
+          assertEquals(offset, timestamp.micros(record));
+          assertEquals(offset, WriteTimestamp.of("Kafka.Offset", unit).micros(record));
+        }
+      }
+    }
+  }
+
+  @Test
+  public void shouldRejectNegativeKafkaOffset() {
+    SinkRecord record = new SinkRecord("t", 2, null, null, null, null, -1L);
+    DataException error = assertThrows(DataException.class,
+        () -> WriteTimestamp.of("kafka.offset", "MICROSECONDS").micros(record));
+    assertTrue(error.getMessage(), error.getMessage().contains("topic 't' (partition 2, offset -1)"));
+  }
+
+  @Test(expected = ConfigException.class)
+  public void shouldRejectUnknownKafkaMetadata() {
+    WriteTimestamp.of("kafka.partition", "MICROSECONDS");
+  }
+
+  @Test
   public void shouldReadNestedStructField() {
     assertEquals(2_000_000L, WriteTimestamp.of("value.metadata.lut", "MILLISECONDS").micros(record(null, value(1L))));
   }

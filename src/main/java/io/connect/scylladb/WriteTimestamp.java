@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
  * The field is addressed as <code>key.&lt;path&gt;</code>, <code>value.&lt;path&gt;</code> or
  * <code>header.&lt;name&gt;[.&lt;path&gt;]</code>, where a path may step into nested structs or maps
  * (<code>value.metadata.updated_at</code>). A header name may contain dots; the longest matching name wins.
+ * <code>kafka.offset</code> uses the partition offset as a logical timestamp in microseconds.
  */
 public final class WriteTimestamp {
 
@@ -27,7 +28,9 @@ public final class WriteTimestamp {
   ));
 
   private static final String LABEL = "Timestamp field";
+  private static final String KAFKA_OFFSET = "kafka.offset";
 
+  // Null only for kafka.offset, which needs no field from the key, value or headers.
   private final RecordField recordField;
   private final String field;
   private final TimeUnit unit;
@@ -35,7 +38,7 @@ public final class WriteTimestamp {
 
   private WriteTimestamp(RecordField recordField, TimeUnit unit, boolean tombstoneFallback) {
     this.recordField = recordField;
-    this.field = recordField.field;
+    this.field = recordField == null ? KAFKA_OFFSET : recordField.field;
     this.unit = unit;
     this.tombstoneFallback = tombstoneFallback;
   }
@@ -46,7 +49,9 @@ public final class WriteTimestamp {
    * @param unit one of {@link #UNITS}, case-insensitive
    */
   public static WriteTimestamp of(String field, String unit) {
-    return new WriteTimestamp(RecordField.parse(field.trim(), LABEL), parseUnit(unit), false);
+    field = field.trim();
+    return new WriteTimestamp(KAFKA_OFFSET.equalsIgnoreCase(field) ? null : RecordField.parse(field, LABEL),
+        parseUnit(unit), false);
   }
 
   /**
@@ -84,16 +89,24 @@ public final class WriteTimestamp {
 
   /**
    * @return the write timestamp of the record in microseconds.
-   * @throws DataException when the field is missing, null or not a timestamp.
+   * @throws DataException when the field is missing, null or not a timestamp, or the Kafka offset is negative.
    */
   public long micros(SinkRecord record) {
+    if (recordField == null) {
+      if (record.kafkaOffset() < 0) {
+        throw new DataException("Timestamp field 'kafka.offset' requires a non-negative offset in "
+            + RecordField.where(record) + ".");
+      }
+      // The full offset is stable across replay and never wraps at a millisecond boundary.
+      return record.kafkaOffset();
+    }
     if (record.value() == null && recordField.source == RecordField.Source.VALUE) {
       if (tombstoneFallback) {
         return kafkaTimestampMicros(record);
       }
       throw new DataException(String.format(
           "Timestamp field '%s' cannot be read from a tombstone in %s: "
-              + "a tombstone has no value, so it needs a 'key.' or 'header.' timestamp field.",
+              + "a tombstone has no value, so it needs a 'key.', 'header.' or 'kafka.offset' timestamp field.",
           field, RecordField.where(record)));
     }
     final RecordField.Resolved resolved = recordField.resolve(record);

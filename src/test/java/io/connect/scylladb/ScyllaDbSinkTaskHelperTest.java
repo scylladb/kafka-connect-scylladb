@@ -185,6 +185,26 @@ public class ScyllaDbSinkTaskHelperTest {
     verify(statement).setQueryTimestamp(100_000_000L);
   }
 
+  @Test
+  public void shouldUseKafkaOffsetForTombstonesAtConnectorLevel() {
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "kafka.offset");
+
+    helper().getBoundStatementForRecord(tombstone(TOPIC, 42L));
+
+    verify(statement).setQueryTimestamp(2L);
+  }
+
+  @Test
+  public void shouldUseKafkaOffsetAtTopicLevelOverConnectorTimestampField() {
+    settings.put(ScyllaDbSinkConnectorConfig.TIMESTAMP_FIELD_CONFIG, "value.time");
+    settings.put("topic.a.b-c.ks1.t1.timestampField", "kafka.offset");
+
+    helper().getBoundStatementForRecord(write(TOPIC, 1L));
+
+    verify(statement).setQueryTimestamp(1L);
+  }
+
   @Test(expected = DataException.class)
   public void shouldFailTombstoneWhenTimestampFieldIsInValue() {
     settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
