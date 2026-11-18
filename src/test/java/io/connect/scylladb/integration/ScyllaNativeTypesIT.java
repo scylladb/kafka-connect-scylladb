@@ -84,6 +84,7 @@ public class ScyllaNativeTypesIT {
 
     private static final Map<String, String> settings = new HashMap<>(ImmutableMap.<String, String>builder()
             .put(ScyllaDbSinkConnectorConfig.TABLE_MANAGE_ENABLED_CONFIG, "false")
+            .put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_BATCH, "true")
             .put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, SCYLLADB_KEYSPACE)
             .put(ScyllaDbSinkConnectorConfig.KEYSPACE_CREATE_ENABLED_CONFIG, "true")
             .put(ScyllaDbSinkConnectorConfig.CONTACT_POINTS_CONFIG, SCYLLA_DB_CONTACT_POINT)

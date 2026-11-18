@@ -32,6 +32,12 @@ public class ScyllaDbSinkConnectorConfigTest {
   }
 
   @Test
+  public void shouldRejectInvalidCommitAfterEveryBatch() {
+    settings.put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_BATCH, "sometimes");
+    assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+  }
+
+  @Test
   public void shouldAcceptValidConfig() {
     settings.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, "9042");
     config = new ScyllaDbSinkConnectorConfig(settings);
