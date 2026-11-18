@@ -4,6 +4,15 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.sink.SinkRecord;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.format.DateTimeParseException;
+import java.time.format.ResolverStyle;
+import java.time.temporal.ChronoField;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -15,8 +24,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * Derives the TTL (CQL <code>USING TTL</code>) of a record from the absolute expiry time in one of
  * its value fields, mapped as <code>__expiration=value.&lt;path&gt;</code>, where a path may step
- * into nested structs or maps (<code>value.metadata.exp</code>). An expiry of 0 means the record
- * never expires.
+ * into nested structs or maps (<code>value.metadata.exp</code>). A zero integer or Timestamp
+ * means the record never expires.
  */
 public final class RecordExpiry {
 
@@ -43,6 +52,17 @@ public final class RecordExpiry {
   static final long MAX_TTL_SECONDS = 630_720_000L;
 
   private static final String LABEL = "Expiration field";
+  private static final DateTimeFormatter BASIC_OFFSET_DATE_TIME = new DateTimeFormatterBuilder()
+      .appendPattern("uuuuMMdd'T'HHmm")
+      .optionalStart()
+      .appendPattern("ss")
+      .optionalStart()
+      .appendFraction(ChronoField.NANO_OF_SECOND, 1, 9, true)
+      .optionalEnd()
+      .optionalEnd()
+      .appendOffset("+HHmm", "Z")
+      .toFormatter(Locale.ROOT)
+      .withResolverStyle(ResolverStyle.STRICT);
 
   private final RecordField recordField;
   private final String field;
@@ -60,7 +80,7 @@ public final class RecordExpiry {
 
   /**
    * @param field field reference such as <code>value.metadata.exp</code>
-   * @param unit one of {@link #UNITS}, case-insensitive; a Kafka Connect Timestamp is read as such
+   * @param unit one of {@link #UNITS}, case-insensitive, used for integers and integer strings
    * @param offsetSeconds added to the expiry time, not negative
    * @param behaviorOnExpired what happens to a record that has already expired
    */
@@ -121,12 +141,29 @@ public final class RecordExpiry {
     }
     final long amount;
     final TimeUnit amountUnit;
-    if (WriteTimestamp.isTimestamp(LABEL, field, record, value, resolved.schema)) {
+    final boolean zeroMeansNever;
+    final boolean connectDate = value instanceof Date && resolved.schema != null
+        && org.apache.kafka.connect.data.Date.LOGICAL_NAME.equals(resolved.schema.name());
+    if (connectDate || WriteTimestamp.isTimestamp(LABEL, field, record, value, resolved.schema)) {
+      // Connect Date represents an epoch day as milliseconds at UTC midnight.
       amount = ((Date) value).getTime();
+      if (connectDate && amount % TimeUnit.DAYS.toMillis(1) != 0) {
+        throw new DataException(String.format(
+            "%s '%s' in %s must be at midnight UTC for a Kafka Connect Date.",
+            LABEL, field, RecordField.where(record)));
+      }
       amountUnit = TimeUnit.MILLISECONDS;
+      zeroMeansNever = !connectDate;
+    } else if (value instanceof String) {
+      String input = ((String) value).trim();
+      Long integer = parseInteger(input);
+      amount = integer != null ? integer : parseIsoMillis(record, input);
+      amountUnit = integer != null ? unit : TimeUnit.MILLISECONDS;
+      zeroMeansNever = integer != null;
     } else {
       amount = WriteTimestamp.integer(LABEL, field, record, value);
       amountUnit = unit;
+      zeroMeansNever = true;
     }
     if (amount < 0) {
       // Before 1970: corrupt rather than expired, so not treated as expired.
@@ -134,7 +171,7 @@ public final class RecordExpiry {
           "Expiration field '%s' in %s is negative, which is not a time: %d %s.",
           field, RecordField.where(record), amount, amountUnit));
     }
-    if (amount == 0) {
+    if (amount == 0 && zeroMeansNever) {
       // TTL 0 writes without one, also overriding the table's default_time_to_live.
       return OptionalInt.of(0);
     }
@@ -166,5 +203,38 @@ public final class RecordExpiry {
           field, RecordField.where(record), ttlSeconds, MAX_TTL_SECONDS));
     }
     return OptionalInt.of((int) ttlSeconds);
+  }
+
+  private static Long parseInteger(String value) {
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException e) {
+      return null;
+    }
+  }
+
+  private long parseIsoMillis(SinkRecord record, String value) {
+    try {
+      final Instant instant = parseIsoInstant(value);
+      final long millis = instant.toEpochMilli();
+      // Preserve pre-epoch values for validation and avoid expiring fractional milliseconds early.
+      return millis >= 0 && instant.getNano() % 1_000_000 != 0 ? Math.addExact(millis, 1) : millis;
+    } catch (DateTimeParseException | ArithmeticException e) {
+      throw new DataException(String.format(
+          "%s '%s' in %s must contain an integer, ISO-8601 date or offset date-time in range: '%s'.",
+          LABEL, field, RecordField.where(record), value), e);
+    }
+  }
+
+  private static Instant parseIsoInstant(String value) {
+    // Only date-times have a T separator. Date-only strings are parsed in extended form.
+    if (value.indexOf('T') == 8) {
+      return OffsetDateTime.parse(value, BASIC_OFFSET_DATE_TIME).toInstant();
+    }
+    try {
+      return OffsetDateTime.parse(value).toInstant();
+    } catch (DateTimeParseException e) {
+      return LocalDate.parse(value).atStartOfDay(ZoneOffset.UTC).toInstant();
+    }
   }
 }

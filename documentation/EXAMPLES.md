@@ -5,7 +5,10 @@ For simpler step-by-step instructions with environment setup check out [quicksta
 ## Expire records after a validity date
 
 The following mapping uses the `validUntil` field as an absolute expiration timestamp and keeps each record for one
-additional day. `validUntil` can be a Kafka Timestamp or a Unix epoch time as an integer, here in milliseconds.
+additional day. If `validUntil` is a Kafka Connect Date or a hyphenated date string (`YYYY-MM-DD`, such as `2026-12-01`), the offset
+keeps the record until midnight UTC at the start of the following day. The field also accepts Kafka Connect
+Timestamp, ISO-8601 date-times with an explicit UTC offset (such as `2026-12-01T04:00:00Z` or `20261201T040000Z`),
+and Unix epoch integers and integer strings, here in milliseconds.
 
 ```
 topics = events
@@ -28,7 +31,8 @@ Records whose resulting expiration time is not in the future delete their row in
 version cannot outlive them. With `topic.events.example_ks.events.behaviorOnExpired = SKIP` they are skipped,
 and with `FAIL` they fail: they go to the errant record reporter, or, without one, `behavior.on.error` decides.
 If `validUntil` holds Unix epoch seconds, set `expirationUnit = SECONDS` instead. The setting is required
-with `__expiration`, even for a Kafka Timestamp, which ignores it. A `validUntil` of `0` never expires.
+with `__expiration` and applies only to integers and integer strings. A numeric or Timestamp value of `0`
+never expires.
 
 
 ## One topic to many tables
