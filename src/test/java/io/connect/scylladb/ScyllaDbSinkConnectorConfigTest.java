@@ -68,6 +68,16 @@ public class ScyllaDbSinkConnectorConfigTest {
   }
 
   @Test
+  public void shouldRejectMappingEntryWithExtraEqualsSign() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "userid=key.id=ignored,userid=value.id");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Invalid mapping entry 'userid=key.id=ignored'"));
+  }
+
+  @Test
   public void shouldRejectEquivalentColumnNamesMappedFromDifferentFields() {
     settings.put("topic.a.ks1.t1.mapping", "USERID=value.id, \"userid\"=header.id");
 

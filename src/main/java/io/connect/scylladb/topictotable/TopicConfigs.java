@@ -109,9 +109,10 @@ public class TopicConfigs {
   public static void validateMapping(String setting, String mapping) {
     Map<String, String> sourcesByColumn = new HashMap<>();
     for (String mappedEntry : mapping.split(",")) {
-      String[] columnNameMap = mappedEntry.split("=");
-      if (columnNameMap.length != 2) {
-        continue;
+      String[] columnNameMap = mappedEntry.split("=", -1);
+      if (columnNameMap.length != 2 || columnNameMap[0].trim().isEmpty() || columnNameMap[1].trim().isEmpty()) {
+        throw new ConfigException(setting, mapping,
+                String.format("Invalid mapping entry '%s'. Expected column=recordField.", mappedEntry.trim()));
       }
       String column = columnNameMap[0].trim();
       String source = columnNameMap[1];
