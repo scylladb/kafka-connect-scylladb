@@ -1,5 +1,6 @@
 package io.connect.scylladb;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -17,6 +18,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -39,6 +41,34 @@ public class ScyllaDbSinkTaskTest {
   //@Test
   public void shouldReturnNonNullVersion() {
     assertNotNull(task.version());
+  }
+
+  @Test
+  public void shouldRestoreOffsetsEachTimePartitionsOpen() {
+    settings.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, "ks");
+    SinkTaskContext context = mock(SinkTaskContext.class);
+    ScyllaDbSession session = mock(ScyllaDbSession.class);
+    task.initialize(context);
+    task.session = session;
+    when(session.isValid()).thenReturn(true);
+    TopicPartition first = new TopicPartition(KAFKA_TOPIC, 0);
+    TopicPartition second = new TopicPartition(KAFKA_TOPIC, 1);
+    Map<TopicPartition, Long> firstOffsets = Collections.singletonMap(first, 12L);
+    Map<TopicPartition, Long> secondOffsets = Collections.singletonMap(second, 34L);
+    when(session.loadOffsets(Collections.singleton(first))).thenReturn(firstOffsets);
+    when(session.loadOffsets(Collections.singleton(second))).thenReturn(secondOffsets);
+
+    task.start(settings);
+    task.open(Collections.emptyList());
+    verify(session, never()).loadOffsets(any());
+    verify(context, never()).offset(anyMap());
+
+    task.open(Collections.singletonList(first));
+    task.open(Collections.singletonList(second));
+
+    verify(context).offset(firstOffsets);
+    verify(context).offset(secondOffsets);
+    verify(context, never()).assignment();
   }
 
   // With behavior.on.error=FAIL and no errant record reporter, nothing after a record that cannot be converted is written.
