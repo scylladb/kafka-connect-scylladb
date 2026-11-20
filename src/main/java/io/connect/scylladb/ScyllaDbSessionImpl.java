@@ -157,10 +157,10 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
             TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
               if (statement == null) {
-                statement = statementStart.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
+                statement = statementStart.whereColumn(CqlIdentifier.fromInternal(columnMetadata.getName())).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
               }
               else {
-                statement = statement.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
+                statement = statement.whereColumn(CqlIdentifier.fromInternal(columnMetadata.getName())).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
               }
             }
             assert statement != null;
