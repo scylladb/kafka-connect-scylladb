@@ -14,6 +14,7 @@ import org.apache.kafka.common.record.TimestampType;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.junit.experimental.categories.Category;
@@ -30,17 +31,21 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 /**
- * Deletes from tables whose primary key columns are quoted mixed-case names, {@code "userKey"} and
- * {@code "itemId"}: tables the connector creates from a record key with such field names, and
- * tables created beforehand. Each delete kind goes through the same delete statement.
+ * Writes to and deletes from tables whose columns have names CQL must quote: mixed-case primary
+ * key columns {@code "userKey"} and {@code "itemId"}, ones that need quotes even in lower case,
+ * {@code "_userId"} and the reserved word {@code "Order"}, and a regular column {@code "__ttl"}.
+ * Tables the connector creates from the record, and tables created beforehand.
  */
 @Category(IntegrationTest.class)
-public class QuotedKeyColumnDeleteIT {
+public class QuotedColumnNamesIT {
 
-  private static final String KEYSPACE = "quoted_key_delete";
+  private static final String KEYSPACE = "quoted_column_names";
+  private static final int TOPIC_TTL_SECONDS = 3_600;
   private static final int PORT = 9042;
   private static final int MAX_CONNECTION_RETRIES = 30;
   private static final long BASE_TIMESTAMP = 1_700_000_000_000L;
@@ -56,6 +61,15 @@ public class QuotedKeyColumnDeleteIT {
       .field("name", Schema.STRING_SCHEMA)
       .field("op", Schema.OPTIONAL_STRING_SCHEMA)
       .field("exp", Schema.OPTIONAL_INT64_SCHEMA)
+      .build();
+  private static final Schema RESERVED_KEY_SCHEMA = SchemaBuilder.struct()
+      .field("_userId", Schema.STRING_SCHEMA)
+      .field("Order", Schema.INT64_SCHEMA)
+      .build();
+  private static final Schema RESERVED_VALUE_SCHEMA = SchemaBuilder.struct()
+      .field("_userId", Schema.STRING_SCHEMA)
+      .field("Order", Schema.INT64_SCHEMA)
+      .field("name", Schema.STRING_SCHEMA)
       .build();
 
   private static String contactPoint;
@@ -160,6 +174,85 @@ public class QuotedKeyColumnDeleteIT {
     assertEquals("alice", row(table).getString("name"));
     put(mapRecord(table, "bob", null, nowSeconds() - 60, 1));
     assertNull(row(table));
+  }
+
+  @Test
+  public void keyColumnsQuotedInLowerCaseInCreatedTable() {
+    String table = "created_reserved";
+    start(managedSettings());
+    Struct key = new Struct(RESERVED_KEY_SCHEMA).put("_userId", "user-1").put("Order", 7L);
+    Struct value = new Struct(RESERVED_VALUE_SCHEMA).put("_userId", "user-1").put("Order", 7L).put("name", "alice");
+    put(new SinkRecord(table, 0, RESERVED_KEY_SCHEMA, key, RESERVED_VALUE_SCHEMA, value, 0,
+        BASE_TIMESTAMP, TimestampType.CREATE_TIME));
+    assertEquals("alice", reservedRow(table).getString("name"));
+    put(new SinkRecord(table, 0, RESERVED_KEY_SCHEMA, key, null, null, 1,
+        BASE_TIMESTAMP + 1000L, TimestampType.CREATE_TIME));
+    assertNull(reservedRow(table));
+  }
+
+  @Test
+  public void keyColumnsQuotedInLowerCaseInExistingTable() {
+    String table = "existing_reserved";
+    try (CqlSession session = sessionBuilder().build()) {
+      session.execute("CREATE TABLE " + KEYSPACE + "." + table
+          + " (\"_userId\" text, \"Order\" bigint, name text, PRIMARY KEY (\"_userId\", \"Order\"))");
+    }
+    start(settings());
+    Map<String, Object> key = new HashMap<>();
+    key.put("_userId", "user-1");
+    key.put("Order", 7L);
+    Map<String, Object> value = new HashMap<>(key);
+    value.put("name", "alice");
+    put(new SinkRecord(table, 0, null, key, null, value, 0, BASE_TIMESTAMP, TimestampType.CREATE_TIME));
+    assertEquals("alice", reservedRow(table).getString("name"));
+    put(new SinkRecord(table, 0, null, key, null, null, 1, BASE_TIMESTAMP + 1000L, TimestampType.CREATE_TIME));
+    assertNull(reservedRow(table));
+  }
+
+  @Test
+  public void columnNamedTtlKeepsItsValueUnderTopicTtl() {
+    // The topic's TTL is bound to its own marker, which must not be the column's.
+    String table = "existing_ttl_column";
+    try (CqlSession session = sessionBuilder().build()) {
+      session.execute("CREATE TABLE " + KEYSPACE + "." + table + " (\"userKey\" text, \"itemId\" bigint, "
+          + "name text, \"__ttl\" text, PRIMARY KEY (\"userKey\", \"itemId\"))");
+    }
+    Map<String, String> settings = settings();
+    settings.put(topicPrefix(table) + ".ttlSeconds", String.valueOf(TOPIC_TTL_SECONDS));
+    start(settings);
+    Map<String, Object> value = mapKey();
+    value.put("name", "alice");
+    value.put("__ttl", "own value");
+    put(new SinkRecord(table, 0, null, mapKey(), null, value, 0, BASE_TIMESTAMP, TimestampType.CREATE_TIME));
+    try (CqlSession session = sessionBuilder().withKeyspace(KEYSPACE).build()) {
+      Row row = session.execute("SELECT \"__ttl\", TTL(name) AS name_ttl, TTL(\"__ttl\") AS column_ttl FROM "
+          + table + " WHERE \"userKey\" = ? AND \"itemId\" = ?", "user-1", 7L).one();
+      assertNotNull(row);
+      assertEquals("own value", row.getString("__ttl"));
+      for (String ttl : new String[] {"name_ttl", "column_ttl"}) {
+        Integer seconds = row.get(ttl, Integer.class);
+        assertNotNull(seconds, ttl);
+        assertTrue(seconds > 0 && seconds <= TOPIC_TTL_SECONDS, ttl + " " + seconds);
+      }
+    }
+  }
+
+  @Test
+  public void unboundKeyColumnIsNamedAsInTheTable() {
+    String table = "existing_unbound";
+    createTable(table);
+    start(settings());
+    Map<String, Object> key = Collections.singletonMap("userKey", "user-1");
+    ConnectException e = assertThrows(ConnectException.class, () -> put(new SinkRecord(table, 0, null, key,
+        null, null, 0, BASE_TIMESTAMP, TimestampType.CREATE_TIME)));
+    assertTrue(e.getCause().getMessage().contains("[\"itemId\"]"), e.getCause().getMessage());
+  }
+
+  private static Row reservedRow(String table) {
+    try (CqlSession session = sessionBuilder().withKeyspace(KEYSPACE).build()) {
+      return session.execute("SELECT name FROM " + table + " WHERE \"_userId\" = ? AND \"Order\" = ?",
+          "user-1", 7L).one();
+    }
   }
 
   private static long nowSeconds() {
