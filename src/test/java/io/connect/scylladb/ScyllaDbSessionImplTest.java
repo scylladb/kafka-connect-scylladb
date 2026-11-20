@@ -131,7 +131,7 @@ public class ScyllaDbSessionImplTest {
     // One statement per kind: the TTL is bound per record, not prepared into the statement.
     List<String> queries = preparedQueries(cqlSession, 2);
     assertTrue(queries.get(0), queries.get(0).endsWith("USING TTL 10"));
-    assertTrue(queries.get(1), queries.get(1).endsWith("USING TTL :\"__ttl\""));
+    assertTrue(queries.get(1), queries.get(1).endsWith("USING TTL ?"));
   }
 
   @Test
@@ -153,7 +153,7 @@ public class ScyllaDbSessionImplTest {
 
     // A new column must reach the insert that binds the TTL, too.
     List<String> queries = preparedQueries(cqlSession, 2);
-    assertTrue(queries.get(1), queries.get(1).endsWith("USING TTL :\"__ttl\""));
+    assertTrue(queries.get(1), queries.get(1).endsWith("USING TTL ?"));
   }
 
   @Test

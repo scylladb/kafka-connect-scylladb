@@ -17,7 +17,6 @@ import com.datastax.oss.driver.api.querybuilder.insert.RegularInsert;
 import com.datastax.oss.driver.api.querybuilder.select.Select;
 import io.connect.scylladb.ScyllaDbSchemaBuilder.ScyllaDbSchemaKey;
 import io.connect.scylladb.topictotable.TopicConfigs;
-import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -156,11 +155,12 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
             Delete statement = null;
             TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
+              final CqlIdentifier column = CqlIdentifier.fromInternal(columnMetadata.getName());
               if (statement == null) {
-                statement = statementStart.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
+                statement = statementStart.whereColumn(column).isEqualTo(QueryBuilder.bindMarker(column));
               }
               else {
-                statement = statement.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
+                statement = statement.whereColumn(column).isEqualTo(QueryBuilder.bindMarker(column));
               }
             }
             assert statement != null;
@@ -177,16 +177,19 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     RegularInsert regularInsert = null;
     TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
+      // The marker takes the column's own name, quoted where CQL needs it, as in "userKey" or "_id".
+      final CqlIdentifier column = CqlIdentifier.fromInternal(columnMetadata.getName());
       if (regularInsert == null) {
-        regularInsert = insertInto.value(CqlIdentifier.fromInternal(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));
+        regularInsert = insertInto.value(column, QueryBuilder.bindMarker(column));
       } else {
-        regularInsert = regularInsert.value(CqlIdentifier.fromInternal(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));
+        regularInsert = regularInsert.value(column, QueryBuilder.bindMarker(column));
       }
     }
     assert regularInsert != null;
     log.debug("insert() - Preparing statement. '{}'", regularInsert.asCql());
     if (bindTtl) {
-      return session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker(ScyllaDbConstants.TTL_BIND_MARKER)).build());
+      // Anonymous, and so the last variable: a named marker would share a same-named column's variable.
+      return session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker()).build());
     } else {
       return (config.ttl == null) ? session.prepare(regularInsert.build()) :
               session.prepare(regularInsert.usingTtl(config.ttl).build());

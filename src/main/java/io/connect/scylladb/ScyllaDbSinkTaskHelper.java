@@ -171,7 +171,9 @@ public class ScyllaDbSinkTaskHelper {
         final RecordToBoundStatementConverter.State state = boundStatementConverter.convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
         boundStatement = state.statement;
         if (topicConfigs != null && topicConfigs.getTtl() != null) {
-          boundStatement = boundStatement.setInt(ScyllaDbConstants.TTL_BIND_MARKER, topicConfigs.getTtl());
+          // The TTL marker is anonymous and follows the values.
+          final int ttlIndex = boundStatement.getPreparedStatement().getVariableDefinitions().size() - 1;
+          boundStatement = boundStatement.setInt(ttlIndex, topicConfigs.getTtl());
         }
       } catch (RuntimeException e) {
         if (completesMapping) {
