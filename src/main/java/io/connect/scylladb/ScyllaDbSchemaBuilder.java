@@ -168,12 +168,13 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTableColumnMap().entrySet()) {
         String columnName = entry.getValue().getScyllaColumnName();
         log.trace("alter for mapping() - Checking if table has '{}' column.", columnName);
-        final TableMetadata.Column columnMetadata = tableMetadata.columnMetadata(columnName);
+        final TableMetadata.Column columnMetadata =
+                tableMetadata.columnMetadata(CqlIdentifier.fromCql(columnName).asInternal());
 
         if (null == columnMetadata) {
           log.debug("alter for mapping() - Adding column '{}'", columnName);
           final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-          addedColumns.put(CqlIdentifier.fromInternal(columnName).asCql(true), dataType);
+          addedColumns.put(CqlIdentifier.fromCql(columnName).asCql(true), dataType);
 
         } else {
           log.trace("alter for mapping() - Table already has '{}' column.", columnName);
@@ -328,7 +329,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
     if (topicConfigs != null && topicConfigs.isScyllaColumnsMapped()) {
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTablePartitionKeyMap().entrySet()) {
         final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-        final String columnName = CqlIdentifier.fromInternal(entry.getValue().getScyllaColumnName()).asCql(true);
+        final String columnName = entry.getValue().getScyllaColumnName();
         if (create == null) {
           create = createStart.withPartitionKey(columnName, dataType);
         }
@@ -338,7 +339,7 @@ class ScyllaDbSchemaBuilder extends SchemaChangeListenerBase {
       }
       for (Map.Entry<String, TopicConfigs.KafkaScyllaColumnMapper> entry: topicConfigs.getTableColumnMap().entrySet()) {
         final DataType dataType = dataType(entry.getValue().getKafkaRecordField().schema());
-        final String columnName = CqlIdentifier.fromInternal(entry.getValue().getScyllaColumnName()).asCql(true);
+        final String columnName = entry.getValue().getScyllaColumnName();
         create = create.withColumn(columnName, dataType);
       }
     } else {

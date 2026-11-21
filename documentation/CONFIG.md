@@ -252,6 +252,8 @@ the sanitized name may be another subscribed topic.
   one of its own name. Each column is bound once, a ``key.`` entry first; other key fields, and ``key.`` entries
   to columns outside the primary key, are ignored. A tombstone that leaves a primary key column of an existing
   table unbound fails; one for a missing table is skipped first.
+  The own-name fallback fails if that primary key column is explicitly mapped from another source.
+  Configure an explicit ``key.`` mapping for such a column so inserts and deletes use the same key field.
   
 ``topic.my_topic.my_ks.my_table.consistencyLevel``
 

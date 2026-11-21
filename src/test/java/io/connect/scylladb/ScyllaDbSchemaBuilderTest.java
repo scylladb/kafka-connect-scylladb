@@ -1,16 +1,21 @@
 package io.connect.scylladb;
 
 import com.datastax.oss.driver.api.core.CqlIdentifier;
+import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import io.connect.scylladb.topictotable.TopicConfigs;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.HashMap;
 import java.util.Map;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.RETURNS_MOCKS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -38,6 +43,28 @@ public class ScyllaDbSchemaBuilderTest {
   static SinkRecord record(String topic) {
     Struct key = new Struct(KEY_SCHEMA).put("id", 1L);
     return new SinkRecord(topic, 0, KEY_SCHEMA, key, KEY_SCHEMA, key, 0L);
+  }
+
+  @Test
+  public void shouldCreateQuotedMappedColumnsWithoutEmbeddingQuoteCharacters() {
+    Map<String, String> settings = new HashMap<>();
+    settings.put(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, "ks");
+    settings.put(ScyllaDbSinkConnectorConfig.TABLE_MANAGE_ENABLED_CONFIG, "true");
+    settings.put("topic.a.ks.t.mapping", "ID=key.id,\"__timestamp\"=value.id");
+    ScyllaDbSinkConnectorConfig config = new ScyllaDbSinkConnectorConfig(settings);
+    TopicConfigs topicConfigs = config.topicWiseConfigs.get("a");
+    SinkRecord record = record("a");
+    topicConfigs.setTablePartitionAndColumnValues(record);
+
+    new ScyllaDbSchemaBuilder(session, config).create(
+            ScyllaDbSchemaBuilder.ScyllaDbSchemaKey.of("ks", "t"), "t", record, topicConfigs);
+
+    ArgumentCaptor<SimpleStatement> statement = ArgumentCaptor.forClass(SimpleStatement.class);
+    verify(session).executeStatement(statement.capture());
+    String cql = statement.getValue().getQuery();
+    assertTrue(cql, cql.contains("id bigint"));
+    assertTrue(cql, cql.contains("\"__timestamp\" bigint"));
+    assertFalse(cql, cql.contains("\"\"\"__timestamp\"\"\""));
   }
 
   @Test
