@@ -212,6 +212,14 @@ the sanitized name may be another subscribed topic.
   Each destination column can map to only one record field. For example, the connector rejects
   `userid=key.id,userid=value.id` when it builds the configuration. Unquoted names are
   case-insensitive, so `USERID` and `"userid"` also refer to the same column.
+
+  Quote mixed-case destination names to preserve their case, for example
+  `"firstName"=value.firstName,"lastName"=value.lastName`. Unquoted destinations
+  `firstName` and `lastName` resolve to `firstname` and `lastname`.
+  When upgrading from a version that preserved unquoted mixed-case mapping targets, update those
+  targets to quoted names before restarting the connector against an existing mixed-case table.
+  Match the names already stored in the table. A table created with lowercase columns needs lowercase
+  destinations; quoting a mixed-case name selects a different column.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
   A column entry uses the whole path after ``key.``, ``value.`` or ``header.`` as one name, and so does a ``__ttl``
