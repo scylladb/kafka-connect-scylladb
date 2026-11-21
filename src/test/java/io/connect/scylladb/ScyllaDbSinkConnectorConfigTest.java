@@ -100,6 +100,29 @@ public class ScyllaDbSinkConnectorConfigTest {
     ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
     assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
     assertTrue(ex.getMessage(), ex.getMessage().contains("Invalid mapping entry 'userid='"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("column=key.<field>"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("column=value.<field>"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("column=header.<name>"));
+  }
+
+  @Test
+  public void shouldExplainExpirationMappingWithoutSource() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "__expiration=");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("__expiration=value.<field>"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("nested fields separated by dots"));
+  }
+
+  @Test
+  public void shouldAcceptMetadataAndQuotedPhysicalColumnWithSameName() {
+    settings.put("topic.a.ks1.t1.mapping",
+            "id=key.id,__timestamp=value.ts,\"__timestamp\"=value.saved,__ttl=value.ttl,\"__ttl\"=value.savedTtl");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
   }
 
   @Test

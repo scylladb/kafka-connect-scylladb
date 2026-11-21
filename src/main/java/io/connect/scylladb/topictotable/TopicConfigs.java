@@ -205,16 +205,20 @@ public class TopicConfigs {
 
   public static void validateMapping(String setting, String mapping) {
     Map<String, String> sourcesByColumn = new HashMap<>();
+    Map<String, String> sourcesByMetadata = new HashMap<>();
     for (String mappedEntry : mapping.split(",")) {
       String[] columnNameMap = mappedEntry.split("=", 2);
       String column = columnNameMap[0].trim();
       String source = columnNameMap.length == 2 ? columnNameMap[1].trim() : "";
       if (column.isEmpty() || source.isEmpty()) {
+        String guidance = column.equals("__expiration") ? EXPIRATION_MAPPING : MAPPING_FORM;
         throw new ConfigException(setting, mapping,
-                String.format("Invalid mapping entry '%s'. Expected column=recordField.", mappedEntry.trim()));
+                String.format("Invalid mapping entry '%s'. %s", mappedEntry.trim(), guidance));
       }
       String columnId = columnId(column);
-      String previousSource = sourcesByColumn.putIfAbsent(columnId, source);
+      boolean metadata = column.equals("__ttl") || column.equals("__timestamp") || column.equals("__expiration");
+      Map<String, String> sources = metadata ? sourcesByMetadata : sourcesByColumn;
+      String previousSource = sources.putIfAbsent(columnId, source);
       if (previousSource != null && !previousSource.equals(source)) {
         throw new ConfigException(setting, mapping,
                 String.format("Column '%s' is mapped from both '%s' and '%s'.", columnId, previousSource, source));
