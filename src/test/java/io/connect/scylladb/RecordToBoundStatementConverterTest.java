@@ -262,6 +262,20 @@ public class RecordToBoundStatementConverterTest {
   }
 
   @Test
+  public void bindsTopLevelByteBuffers() {
+    // AvroConverter gives BYTES as a ByteBuffer; only the remaining bytes are bound.
+    when(preparedStatement.bind()).thenReturn(boundStatement);
+    Schema schema = SchemaBuilder.struct().field("raw", Schema.BYTES_SCHEMA).build();
+    ByteBuffer raw = ByteBuffer.wrap(new byte[] {9, 1, 2});
+    raw.position(1);
+    SinkRecord record = new SinkRecord("topic", 0, null, null, schema, new Struct(schema).put("raw", raw), 0);
+    new RecordToBoundStatementConverter(preparedStatement).convert(record, null, ScyllaDbConstants.INSERT_OPERATION);
+
+    verify(boundStatement).setByteBuffer("raw", ByteBuffer.wrap(new byte[] {1, 2}));
+    assertEquals(1, raw.position());
+  }
+
+  @Test
   public void bindsDatesInTimestampLists() {
     // Connect Timestamp, Date and Time values in a Struct array or map all arrive as java.util.Date.
     column(0, "seen", DataTypes.listOf(DataTypes.TIMESTAMP));
