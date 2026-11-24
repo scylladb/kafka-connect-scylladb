@@ -91,6 +91,11 @@ This connector supports two types of offset tracking, but always stores them at 
 They will appear in internal ``__consumer_offsets`` topic and can be tracked by checking connector's consumer group
 using `kafka-consumer-groups` tool.
 
+By default, Kafka Connect commits offsets periodically, using the worker setting
+`offset.flush.interval.ms`. To request a commit after each successful batch of writes, set
+`scylladb.offset.commit.after.every.batch=true`. This restores the previous behavior and can reduce
+replayed records after a restart, at the cost of more offset writes to Kafka and, when enabled, ScyllaDB.
+
 **Offset stored in ScyllaDB Table**
 
 This is the default behaviour of the connector. The offsets will be additionally stored in table defined by `scylladb.offset.storage.table` property.

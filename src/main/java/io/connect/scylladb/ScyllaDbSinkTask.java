@@ -102,7 +102,8 @@ public class ScyllaDbSinkTask extends SinkTask {
    * <ol>
    * <li>Validates the kafka records.
    * <li>Writes or deletes records from Kafka topic into ScyllaDB. 
-   * <li>Requests to commit the records when the scyllaDB operations are successful.
+   * <li>Requests an offset commit after successful writes if configured, in addition to Kafka
+   * Connect's periodic commits.
    * </ol>
    */
   @Override
@@ -194,7 +195,7 @@ public class ScyllaDbSinkTask extends SinkTask {
     }
     awaitReportedRecords();
     consecutiveFailures = 0;
-    if (!futures.isEmpty()) {
+    if (config.requestCommitAfterEveryBatch && !futures.isEmpty()) {
       context.requestCommit();
     }
   }

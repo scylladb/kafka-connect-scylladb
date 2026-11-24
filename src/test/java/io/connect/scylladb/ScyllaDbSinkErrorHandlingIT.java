@@ -83,6 +83,7 @@ public class ScyllaDbSinkErrorHandlingIT {
     result.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, String.valueOf(PORT));
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_REPLICATION_FACTOR_CONFIG, "1");
     result.put(ScyllaDbSinkConnectorConfig.ENABLE_OFFSET_STORAGE_TABLE, "false");
+    result.put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_BATCH, "true");
     return result;
   }
 
@@ -130,6 +131,18 @@ public class ScyllaDbSinkErrorHandlingIT {
   @AfterEach
   public void stop() {
     task.stop();
+  }
+
+  @Test
+  public void shouldWriteRowsWithPeriodicCommitsByDefault() {
+    Map<String, String> config = settings();
+    config.remove(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_BATCH);
+    task.start(config);
+
+    task.put(Collections.singletonList(row("periodic_commits", "id", "written")));
+
+    assertEquals("written", name("periodic_commits", "id"));
+    verify(context, never()).requestCommit();
   }
 
   static SinkRecord row(String topic, String id, String name) {

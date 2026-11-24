@@ -91,6 +91,7 @@ public class ScyllaDbSinkConnectorIT {
     result.put(ScyllaDbSinkConnectorConfig.LOAD_BALANCING_LOCAL_DC_CONFIG, "datacenter1");
     result.put(ScyllaDbSinkConnectorConfig.PORT_CONFIG, String.valueOf(SCYLLA_DB_PORT));
     result.put(ScyllaDbSinkConnectorConfig.KEYSPACE_REPLICATION_FACTOR_CONFIG, "1");
+    result.put(ScyllaDbSinkConnectorConfig.OFFSET_COMMIT_AFTER_EVERY_BATCH, "true");
     return result;
   }
 

@@ -496,6 +496,18 @@ the sanitized name may be another subscribed topic.
   * Importance: Medium
   * Default Value: ""
 
+``scylladb.offset.commit.after.every.batch``
+
+  Request an extra Kafka offset commit after each successful batch of ScyllaDB writes. Kafka Connect
+  commits periodically in both modes using the worker's ``offset.flush.interval.ms`` setting. Set this
+  to ``true`` to restore the previous per-batch requests: fewer records may be replayed after a restart,
+  but offset writes to Kafka
+  and, when enabled, ScyllaDB increase. Empty batches and failed batches do not request a commit.
+
+  * Type: Boolean
+  * Importance: Medium
+  * Default Value: False
+
 ### ScyllaDB
 
 ``behavior.on.error``

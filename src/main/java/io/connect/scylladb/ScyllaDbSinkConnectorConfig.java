@@ -79,6 +79,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public final WriteTimestamp writeTimestamp;
   public final int maxRetries;
   public final long retryBackoffMs;
+  public final boolean requestCommitAfterEveryBatch;
   public final String deletesField;
   public final List<String> deletesValues;
   /** Marks records with a value as deletes, for topics without per-topic overrides; null when off. */
@@ -146,6 +147,7 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
     this.writeTimestamp = Strings.isNullOrEmpty(timestampField) ? null : WriteTimestamp.of(timestampField, timestampUnit);
     this.maxRetries = getInt(MAX_RETRIES_CONFIG);
     this.retryBackoffMs = getLong(RETRY_BACKOFF_MS_CONFIG);
+    this.requestCommitAfterEveryBatch = getBoolean(OFFSET_COMMIT_AFTER_EVERY_BATCH);
     this.deletesField = getString(DELETES_FIELD_CONFIG);
     this.deletesValues = getList(DELETES_VALUES_CONFIG);
     try {
@@ -391,6 +393,13 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
   public static final String DELETES_VALUES_CONFIG = "scylladb.deletes.values";
   private static final String DELETES_VALUES_DOC = "Values of scylladb.deletes.field that mark a delete, "
           + "compared as strings, e.g. 'delete' or 'true'. Required when scylladb.deletes.field is set.";
+
+  public static final String OFFSET_COMMIT_AFTER_EVERY_BATCH = "scylladb.offset.commit.after.every.batch";
+  public static final boolean OFFSET_COMMIT_AFTER_EVERY_BATCH_DEFAULT = false;
+  private static final String OFFSET_COMMIT_AFTER_EVERY_BATCH_DOC = "Request a Kafka offset commit "
+          + "after each successful batch of ScyllaDB writes, in addition to the worker's periodic commits "
+          + "using offset.flush.interval.ms. Enabling this can reduce "
+          + "replayed records after a restart, but increases offset writes to Kafka and, when enabled, ScyllaDB.";
 
   public static final String SCYLLADB_GROUP = "ScyllaDB";
   public static final String CONNECTION_GROUP = "Connection";
@@ -776,7 +785,17 @@ public class ScyllaDbSinkConnectorConfig extends AbstractConfig {
                     WRITE_GROUP,
                     10,
                     ConfigDef.Width.MEDIUM,
-                    "Delete field values");
+                    "Delete field values")
+            .define(
+                    OFFSET_COMMIT_AFTER_EVERY_BATCH,
+                    ConfigDef.Type.BOOLEAN,
+                    OFFSET_COMMIT_AFTER_EVERY_BATCH_DEFAULT,
+                    ConfigDef.Importance.MEDIUM,
+                    OFFSET_COMMIT_AFTER_EVERY_BATCH_DOC,
+                    WRITE_GROUP,
+                    11,
+                    ConfigDef.Width.SHORT,
+                    "Request offset commit after each batch");
   }
 
   // ScyllaDB accepts SERIAL and LOCAL_SERIAL only for conditional updates, and rejects every write with them.
