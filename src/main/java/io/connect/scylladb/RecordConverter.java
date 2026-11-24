@@ -1,5 +1,6 @@
 package io.connect.scylladb;
 
+import com.datastax.oss.driver.api.core.data.ByteUtils;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
@@ -196,6 +198,11 @@ public abstract class RecordConverter<T> {
 
     }
 
+    /** Connect BYTES may hold a byte[] or a ByteBuffer (AvroConverter gives the latter). */
+    static byte[] toBytes(Object value) {
+        return value instanceof ByteBuffer ? ByteUtils.getArray((ByteBuffer) value) : (byte[]) value;
+    }
+
     void convertStruct(T result, Struct struct, Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap) {
         Schema schema = struct.schema();
         Iterator fieldsIterator = schema.fields().iterator();
@@ -264,7 +271,7 @@ public abstract class RecordConverter<T> {
                             log.trace("convertStruct() - Processing '{}' as decimal.", fieldName);
                             this.setDecimalField(result, fieldName, (BigDecimal)fieldValue);
                         } else {
-                            byte[] bytes = (byte[])((byte[])fieldValue);
+                            byte[] bytes = toBytes(fieldValue);
                             log.trace("convertStruct() - Processing '{}' as bytes.", fieldName);
                             this.setBytesField(result, fieldName, bytes);
                         }
