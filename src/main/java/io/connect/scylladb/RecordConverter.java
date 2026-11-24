@@ -1,5 +1,6 @@
 package io.connect.scylladb;
 
+import com.datastax.oss.driver.api.core.data.ByteUtils;
 import com.datastax.oss.driver.shaded.guava.common.base.Preconditions;
 import io.connect.scylladb.topictotable.TopicConfigs;
 import io.connect.scylladb.utils.ScyllaDbConstants;
@@ -199,13 +200,7 @@ public abstract class RecordConverter<T> {
 
     /** Connect BYTES may hold a byte[] or a ByteBuffer (AvroConverter gives the latter). */
     static byte[] toBytes(Object value) {
-        if (value instanceof ByteBuffer) {
-            ByteBuffer buffer = ((ByteBuffer) value).duplicate();
-            byte[] bytes = new byte[buffer.remaining()];
-            buffer.get(bytes);
-            return bytes;
-        }
-        return (byte[]) value;
+        return value instanceof ByteBuffer ? ByteUtils.getArray((ByteBuffer) value) : (byte[]) value;
     }
 
     void convertStruct(T result, Struct struct, Map<String, TopicConfigs.KafkaScyllaColumnMapper> columnDetailsMap) {

@@ -263,16 +263,31 @@ public class RecordToBoundStatementConverterTest {
 
   @Test
   public void bindsTopLevelByteBuffers() {
-    // AvroConverter gives BYTES as a ByteBuffer; only the remaining bytes are bound.
-    when(preparedStatement.bind()).thenReturn(boundStatement);
-    Schema schema = SchemaBuilder.struct().field("raw", Schema.BYTES_SCHEMA).build();
-    ByteBuffer raw = ByteBuffer.wrap(new byte[] {9, 1, 2});
-    raw.position(1);
-    SinkRecord record = new SinkRecord("topic", 0, null, null, schema, new Struct(schema).put("raw", raw), 0);
-    new RecordToBoundStatementConverter(preparedStatement).convert(record, null, ScyllaDbConstants.INSERT_OPERATION);
+    // AvroConverter gives BYTES as a ByteBuffer; only the bytes between position and limit are bound.
+    ByteBuffer raw = ByteBuffer.wrap(new byte[] {9, 1, 2, 7});
+    raw.position(1).limit(3);
+    bindRawBytes(raw);
 
     verify(boundStatement).setByteBuffer("raw", ByteBuffer.wrap(new byte[] {1, 2}));
     assertEquals(1, raw.position());
+    assertEquals(3, raw.limit());
+  }
+
+  @Test
+  public void bindsDirectByteBuffers() {
+    ByteBuffer raw = ByteBuffer.allocateDirect(3).put(new byte[] {1, 2, 3});
+    raw.flip();
+    bindRawBytes(raw);
+
+    verify(boundStatement).setByteBuffer("raw", ByteBuffer.wrap(new byte[] {1, 2, 3}));
+    assertEquals(0, raw.position());
+  }
+
+  private void bindRawBytes(ByteBuffer raw) {
+    when(preparedStatement.bind()).thenReturn(boundStatement);
+    Schema schema = SchemaBuilder.struct().field("raw", Schema.BYTES_SCHEMA).build();
+    SinkRecord record = new SinkRecord("topic", 0, null, null, schema, new Struct(schema).put("raw", raw), 0);
+    new RecordToBoundStatementConverter(preparedStatement).convert(record, null, ScyllaDbConstants.INSERT_OPERATION);
   }
 
   @Test
