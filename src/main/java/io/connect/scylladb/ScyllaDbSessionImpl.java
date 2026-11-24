@@ -17,7 +17,6 @@ import com.datastax.oss.driver.api.querybuilder.insert.RegularInsert;
 import com.datastax.oss.driver.api.querybuilder.select.Select;
 import io.connect.scylladb.ScyllaDbSchemaBuilder.ScyllaDbSchemaKey;
 import io.connect.scylladb.topictotable.TopicConfigs;
-import io.connect.scylladb.utils.ScyllaDbConstants;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.errors.ConnectException;
@@ -27,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -155,12 +155,14 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
             DeleteSelection statementStart = QueryBuilder.deleteFrom(keyspace, tableName);
             Delete statement = null;
             TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
+            rejectKeyColumnsDifferingOnlyInCase(keyspace, tableName, tableMetadata);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
+              final CqlIdentifier column = CqlIdentifier.fromInternal(columnMetadata.getName());
               if (statement == null) {
-                statement = statementStart.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
+                statement = statementStart.whereColumn(column).isEqualTo(QueryBuilder.bindMarker(column));
               }
               else {
-                statement = statement.whereColumn(columnMetadata.getName()).isEqualTo(QueryBuilder.bindMarker(columnMetadata.getName()));
+                statement = statement.whereColumn(column).isEqualTo(QueryBuilder.bindMarker(column));
               }
             }
             assert statement != null;
@@ -172,21 +174,41 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
     );
   }
 
+  // Key fields bind by case-insensitive name, so such keys would get one value for both columns
+  // and delete the wrong row (#327).
+  private static void rejectKeyColumnsDifferingOnlyInCase(String keyspace, String tableName,
+                                                          TableMetadata.Table tableMetadata) {
+    Map<String, String> seen = new HashMap<>();
+    for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
+      String name = columnMetadata.getName();
+      String other = seen.putIfAbsent(name.toLowerCase(Locale.ROOT), name);
+      if (other != null) {
+        throw new ConnectException(String.format(
+            "Cannot delete from '%s.%s': primary key columns %s and %s differ only in case",
+            keyspace, tableName, CqlIdentifier.fromInternal(other).asCql(true),
+            CqlIdentifier.fromInternal(name).asCql(true)));
+      }
+    }
+  }
+
   private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, boolean bindTtl) {
     InsertInto insertInto = QueryBuilder.insertInto(keyspace, tableName);
     RegularInsert regularInsert = null;
     TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
     for (TableMetadata.Column columnMetadata : tableMetadata.columns()) {
+      // The marker takes the column's own name, quoted where CQL needs it, as in "userKey" or "_id".
+      final CqlIdentifier column = CqlIdentifier.fromInternal(columnMetadata.getName());
       if (regularInsert == null) {
-        regularInsert = insertInto.value(CqlIdentifier.fromInternal(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));
+        regularInsert = insertInto.value(column, QueryBuilder.bindMarker(column));
       } else {
-        regularInsert = regularInsert.value(CqlIdentifier.fromInternal(columnMetadata.getName()), QueryBuilder.bindMarker(columnMetadata.getName()));
+        regularInsert = regularInsert.value(column, QueryBuilder.bindMarker(column));
       }
     }
     assert regularInsert != null;
     log.debug("insert() - Preparing statement. '{}'", regularInsert.asCql());
     if (bindTtl) {
-      return session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker(ScyllaDbConstants.TTL_BIND_MARKER)).build());
+      // Anonymous, and so the last variable: a named marker would share a same-named column's variable.
+      return session.prepare(regularInsert.usingTtl(QueryBuilder.bindMarker()).build());
     } else {
       return (config.ttl == null) ? session.prepare(regularInsert.build()) :
               session.prepare(regularInsert.usingTtl(config.ttl).build());

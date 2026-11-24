@@ -727,6 +727,8 @@ public class ScyllaDbSinkTaskHelperTest {
   public void shouldBindTtlOfEachRecord() {
     settings.put("topic.a.b-c.ks1.t1.mapping", "id=key.id, name=value.name, __expiration=value.time");
     settings.put("topic.a.b-c.ks1.t1.expirationUnit", "SECONDS");
+    // id and name, then the anonymous TTL marker.
+    when(variables.size()).thenReturn(3);
     ScyllaDbSinkTaskHelper helper = helper();
     final int expiresAt = (int) (System.currentTimeMillis() / 1000) + 3600;
 
@@ -735,7 +737,7 @@ public class ScyllaDbSinkTaskHelperTest {
     helper.getBoundStatementForRecord(write(TOPIC, 2L, 0));
 
     ArgumentCaptor<Integer> ttl = ArgumentCaptor.forClass(Integer.class);
-    verify(statement, times(2)).setInt(eq(ScyllaDbConstants.TTL_BIND_MARKER), ttl.capture());
+    verify(statement, times(2)).setInt(eq(2), ttl.capture());
     assertEquals(3600, ttl.getAllValues().get(0), 1);
     assertEquals(Integer.valueOf(0), ttl.getAllValues().get(1));
   }
