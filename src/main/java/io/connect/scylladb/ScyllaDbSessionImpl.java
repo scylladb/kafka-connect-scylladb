@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -154,6 +155,7 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
             DeleteSelection statementStart = QueryBuilder.deleteFrom(keyspace, tableName);
             Delete statement = null;
             TableMetadata.Table tableMetadata = existingTableMetadata(keyspace, tableName);
+            rejectKeyColumnsDifferingOnlyInCase(keyspace, tableName, tableMetadata);
             for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
               final CqlIdentifier column = CqlIdentifier.fromInternal(columnMetadata.getName());
               if (statement == null) {
@@ -170,6 +172,23 @@ class ScyllaDbSessionImpl implements ScyllaDbSession {
           }
         }
     );
+  }
+
+  // Key fields bind by case-insensitive name, so such keys would get one value for both columns
+  // and delete the wrong row (#327).
+  private static void rejectKeyColumnsDifferingOnlyInCase(String keyspace, String tableName,
+                                                          TableMetadata.Table tableMetadata) {
+    Map<String, String> seen = new HashMap<>();
+    for (TableMetadata.Column columnMetadata : tableMetadata.primaryKey()) {
+      String name = columnMetadata.getName();
+      String other = seen.putIfAbsent(name.toLowerCase(Locale.ROOT), name);
+      if (other != null) {
+        throw new ConnectException(String.format(
+            "Cannot delete from '%s.%s': primary key columns %s and %s differ only in case",
+            keyspace, tableName, CqlIdentifier.fromInternal(other).asCql(true),
+            CqlIdentifier.fromInternal(name).asCql(true)));
+      }
+    }
   }
 
   private PreparedStatement createInsertPreparedStatement(String keyspace, String tableName, boolean bindTtl) {

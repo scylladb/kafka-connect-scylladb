@@ -172,4 +172,24 @@ public class ScyllaDbSessionImplTest {
     List<String> queries = preparedQueries(cqlSession, 1);
     assertFalse(queries.get(0), queries.get(0).contains("TTL"));
   }
+
+  @Test
+  public void shouldRejectDeleteWhenKeyColumnsDifferOnlyInCase() {
+    ColumnMetadata upper = mock(ColumnMetadata.class);
+    when(upper.getName()).thenReturn(CqlIdentifier.fromInternal("userKey"));
+    ColumnMetadata lower = mock(ColumnMetadata.class);
+    when(lower.getName()).thenReturn(CqlIdentifier.fromInternal("userkey"));
+    com.datastax.oss.driver.api.core.metadata.schema.TableMetadata table =
+        mock(com.datastax.oss.driver.api.core.metadata.schema.TableMetadata.class);
+    when(table.getName()).thenReturn(CqlIdentifier.fromInternal("t"));
+    when(table.getKeyspace()).thenReturn(CqlIdentifier.fromInternal("ks"));
+    when(table.getPrimaryKey()).thenReturn(java.util.Arrays.asList(upper, lower));
+    when(table.getColumns()).thenReturn(Collections.emptyMap());
+    KeyspaceMetadata keyspace = mock(KeyspaceMetadata.class);
+    when(keyspace.getTable(anyString())).thenReturn(Optional.of(table));
+    when(metadata.getKeyspace(anyString())).thenReturn(Optional.of(keyspace));
+
+    ConnectException ex = assertThrows(ConnectException.class, () -> session.delete("ks", "t"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("\"userKey\" and userkey differ only in case"));
+  }
 }

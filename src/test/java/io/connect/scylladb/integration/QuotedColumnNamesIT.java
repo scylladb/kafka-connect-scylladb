@@ -248,6 +248,30 @@ public class QuotedColumnNamesIT {
     assertTrue(e.getCause().getMessage().contains("[\"itemId\"]"), e.getCause().getMessage());
   }
 
+  @Test
+  public void deleteFailsWhenKeyColumnsDifferOnlyInCase() {
+    String table = "existing_case_twins";
+    try (CqlSession session = sessionBuilder().withKeyspace(KEYSPACE).build()) {
+      session.execute("CREATE TABLE " + table
+          + " (\"userKey\" text, userkey text, name text, PRIMARY KEY (\"userKey\", userkey))");
+      for (String[] key : new String[][] {{"a", "a"}, {"b", "b"}, {"a", "b"}}) {
+        // Older than the record, so a delete of the wrong key would remove the row.
+        session.execute("INSERT INTO " + table
+            + " (\"userKey\", userkey, name) VALUES (?, ?, 'x') USING TIMESTAMP 1", key[0], key[1]);
+      }
+    }
+    start(settings());
+    Map<String, Object> key = new LinkedHashMap<>();
+    key.put("userKey", "a");
+    key.put("userkey", "b");
+    ConnectException e = assertThrows(ConnectException.class, () -> put(new SinkRecord(table, 0, null, key,
+        null, null, 0, BASE_TIMESTAMP, TimestampType.CREATE_TIME)));
+    assertTrue(e.getCause().getMessage().contains("differ only in case"), e.getCause().getMessage());
+    try (CqlSession session = sessionBuilder().withKeyspace(KEYSPACE).build()) {
+      assertEquals(3, session.execute("SELECT * FROM " + table).all().size());
+    }
+  }
+
   private static Row reservedRow(String table) {
     try (CqlSession session = sessionBuilder().withKeyspace(KEYSPACE).build()) {
       return session.execute("SELECT name FROM " + table + " WHERE \"_userId\" = ? AND \"Order\" = ?",
