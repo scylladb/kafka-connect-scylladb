@@ -728,6 +728,90 @@ public class RecordToBoundStatementConverterTest {
   }
 
   @Test
+  public void shouldBindQuotedPhysicalColumnSeparatelyFromTimestampMetadata() {
+    when(preparedStatement.bind()).thenReturn(boundStatement);
+    Map<String, String> topicSettings = Collections.singletonMap("mapping",
+        "ID=key.id,__timestamp=value.ts,\"__timestamp\"=value.saved");
+    TopicConfigs topicConfigs = new TopicConfigs("ks", "t", topicSettings, new ScyllaDbSinkConnectorConfig(
+        Collections.singletonMap(ScyllaDbSinkConnectorConfig.KEYSPACE_CONFIG, "ks")));
+    Map<String, Object> value = new HashMap<>();
+    value.put("ts", 10L);
+    value.put("saved", 20L);
+    SinkRecord record = new SinkRecord("t", 0, null, Collections.singletonMap("id", 1L), null, value, 0L);
+    topicConfigs.setTablePartitionAndColumnValues(record);
+
+    new RecordToBoundStatementConverter(preparedStatement)
+        .convert(record, topicConfigs, ScyllaDbConstants.INSERT_OPERATION);
+
+    verify(boundStatement).setLong("id", 1L);
+    verify(boundStatement).setLong("\"__timestamp\"", 20L);
+    verify(boundStatement, never()).setLong("ts", 10L);
+  }
+
+  @Test
+  public void shouldIgnoreAlreadyBoundDestinationBeforeRejectingDeleteFallback() {
+    Schema keySchema = SchemaBuilder.struct().name("key")
+        .field("alias", Schema.INT64_SCHEMA)
+        .field("id", Schema.INT64_SCHEMA)
+        .build();
+
+    RecordToBoundStatementConverter.State state = delete("id=value.alias", "id",
+        new Struct(keySchema).put("alias", 7L).put("id", 99L));
+
+    assertEquals(1, state.parameters);
+    verify(boundStatement).setLong("id", 7L);
+    verify(boundStatement, never()).setLong("id", 99L);
+  }
+
+  @Test
+  public void shouldResolveValueNamesakeBeforeEarlierOwnNameFallback() {
+    Schema keySchema = SchemaBuilder.struct().name("key")
+        .field("id", Schema.INT64_SCHEMA)
+        .field("alias", Schema.INT64_SCHEMA)
+        .build();
+
+    RecordToBoundStatementConverter.State state = delete("id=value.alias", "id",
+        new Struct(keySchema).put("id", 99L).put("alias", 7L));
+
+    assertEquals(1, state.parameters);
+    verify(boundStatement).setLong("id", 7L);
+    verify(boundStatement, never()).setLong("id", 99L);
+  }
+
+  @Test
+  public void shouldRejectDeleteFallbackOverExplicitValueMapping() {
+    Schema keySchema = SchemaBuilder.struct().name("key").field("id", Schema.INT64_SCHEMA).build();
+
+    DataException ex = assertThrows(DataException.class,
+        () -> delete("id=value.foo", "id", new Struct(keySchema).put("id", 1L)));
+
+    assertTrue(ex.getMessage(), ex.getMessage().contains("primary key column 'id'"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("value.foo"));
+    verify(boundStatement, never()).setLong(anyString(), anyLong());
+  }
+
+  @Test
+  public void shouldRejectDeleteFallbackOverQuotedHeaderMapping() {
+    Schema keySchema = SchemaBuilder.struct().name("key").field("id", Schema.INT64_SCHEMA).build();
+
+    assertThrows(DataException.class,
+        () -> delete("\"id\"=header.foo", "id", new Struct(keySchema).put("id", 1L)));
+
+    verify(boundStatement, never()).setLong(anyString(), anyLong());
+  }
+
+  @Test
+  public void shouldBindQuotedDeleteColumnThroughValueNamesake() {
+    Schema keySchema = SchemaBuilder.struct().name("key").field("id", Schema.INT64_SCHEMA).build();
+
+    RecordToBoundStatementConverter.State state = delete("\"ID\"=value.id", "\"ID\"",
+        new Struct(keySchema).put("id", 1L));
+
+    assertEquals(1, state.parameters);
+    verify(boundStatement).setLong("\"ID\"", 1L);
+  }
+
+  @Test
   public void shouldNotBindNonKeyFieldOnUnmappedDelete() {
     Schema keySchema = SchemaBuilder.struct().name("key")
         .field("id", Schema.INT64_SCHEMA)

@@ -48,6 +48,7 @@ public class TopicConfigs {
   private Map<String, KafkaScyllaColumnMapper> tablePartitionKeyMap;
   private Map<String, KafkaScyllaColumnMapper> tableColumnMap;
   private final Map<String, String> valueFieldColumns = new HashMap<>();
+  private final Map<String, String> physicalColumnSources = new HashMap<>();
   private ConsistencyLevel consistencyLevel = null;
   private String ttlMappedField;
   private Integer ttl;
@@ -124,7 +125,11 @@ public class TopicConfigs {
           throw new ConfigException(settingName(settingNames, "mapping"), this.mappingStringForTopic,
               column + " must map a value field, as in " + column + "=value.<field>.");
         } else if (recordField.startsWith("value.") && !column.equals("__ttl") && !column.equals("__timestamp")) {
-          this.valueFieldColumns.put(recordField.substring("value.".length()), column);
+          this.valueFieldColumns.put(recordField.substring("value.".length()),
+                  CqlIdentifier.fromInternal(columnId(column)).asCql(true));
+        }
+        if (!isMetadata(column)) {
+          physicalColumnSources.put(columnId(column), recordField);
         }
       }
     }
@@ -203,6 +208,33 @@ public class TopicConfigs {
     }
   }
 
+  public static void validateMapping(String setting, String mapping) {
+    Map<String, String> sourcesByColumn = new HashMap<>();
+    Map<String, String> sourcesByMetadata = new HashMap<>();
+    for (String mappedEntry : mapping.split(",")) {
+      String[] columnNameMap = mappedEntry.split("=", 2);
+      String column = columnNameMap[0].trim();
+      String source = columnNameMap.length == 2 ? columnNameMap[1].trim() : "";
+      if (column.isEmpty() || source.isEmpty()) {
+        String guidance = column.equals("__expiration") ? EXPIRATION_MAPPING : MAPPING_FORM;
+        throw new ConfigException(setting, mapping,
+                String.format("Invalid mapping entry '%s'. %s", mappedEntry.trim(), guidance));
+      }
+      String columnId = columnId(column);
+      boolean metadata = isMetadata(column);
+      Map<String, String> sources = metadata ? sourcesByMetadata : sourcesByColumn;
+      String previousSource = sources.putIfAbsent(columnId, source);
+      if (previousSource != null && !previousSource.equals(source)) {
+        throw new ConfigException(setting, mapping,
+                String.format("Column '%s' is mapped from both '%s' and '%s'.", columnId, previousSource, source));
+      }
+    }
+  }
+
+  private static boolean isMetadata(String column) {
+    return column.equals("__ttl") || column.equals("__timestamp") || column.equals("__expiration");
+  }
+
   // Reports an invalid setting under its full name, as in topic.my_topic.ks.table.expirationUnit.
   private static <T> T checkSetting(Map<String, String> names, String suffix, String value, Function<String, T> parse) {
     try {
@@ -268,7 +300,8 @@ public class TopicConfigs {
         }
         continue;
       }
-      KafkaScyllaColumnMapper kafkaScyllaColumnMapper = new KafkaScyllaColumnMapper(scyllaColumnName);
+      KafkaScyllaColumnMapper kafkaScyllaColumnMapper = new KafkaScyllaColumnMapper(
+              CqlIdentifier.fromInternal(columnId(scyllaColumnName)).asCql(true));
       if (recordFieldMapping.startsWith("key.")) {
         if (record.keySchema() != null) {
           kafkaScyllaColumnMapper.kafkaRecordField = getFiledForNameFromSchema(record.keySchema(), recordField, "record.keySchema()");
@@ -413,6 +446,8 @@ public class TopicConfigs {
    * carry fields that are not columns. Every column must be in the primary key, since the key may
    * also feed regular columns, and each is bound once: a {@code key.*} entry wins over a namesake,
    * then the earlier key field wins.
+   * An own-name fallback to an explicitly mapped primary key column fails, since its insert source
+   * differs from the fallback key field.
    *
    * @param keyFields the record key's fields, in a stable order
    * @param primaryKeyColumn whether a column is in the table's primary key
@@ -433,11 +468,25 @@ public class TopicConfigs {
         continue;
       }
       String column = valueFieldColumns.get(keyField);
-      if (column == null && tablePartitionKeyMap.isEmpty()) {
-        column = keyField;
-      }
       if (column != null && primaryKeyColumn.test(column) && boundColumns.add(columnId(column))) {
         deleteKeyMap.put(keyField, new KafkaScyllaColumnMapper(column));
+      }
+    }
+    // Resolve every value namesake before considering an own-name fallback.
+    for (String keyField : keyFields) {
+      if (!tablePartitionKeyMap.isEmpty() || deleteKeyMap.containsKey(keyField)
+          || valueFieldColumns.containsKey(keyField) || boundColumns.contains(columnId(keyField))) {
+        continue;
+      }
+      if (primaryKeyColumn.test(keyField)) {
+        String source = physicalColumnSources.get(columnId(keyField));
+        if (source != null) {
+          throw new DataException(String.format(
+                  "Cannot delete by key field '%s': primary key column '%s' is explicitly mapped from '%s'. "
+                          + "Configure a key mapping for this column.", keyField, keyField, source));
+        }
+        boundColumns.add(columnId(keyField));
+        deleteKeyMap.put(keyField, new KafkaScyllaColumnMapper(keyField));
       }
     }
     return deleteKeyMap;

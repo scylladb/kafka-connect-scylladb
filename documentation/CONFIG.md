@@ -208,6 +208,18 @@ the sanitized name may be another subscribed topic.
   For mapping topic and fields from Kafka record's key, value and headers to ScyllaDB table and its columns.
  `my_topic` should refer to the topic name as seen in a SinkRecord passed to the Connector - which means after all Single Message Transforms.   
   For example if you're using RegexRouter to change the topic name from `top1` to `top2` you would use `topic.top2.ks.table.mapping=...` property.
+
+  Each destination column can map to only one record field. For example, the connector rejects
+  `userid=key.id,userid=value.id` when it builds the configuration. Unquoted names are
+  case-insensitive, so `USERID` and `"userid"` also refer to the same column.
+
+  Quote mixed-case destination names to preserve their case, for example
+  `"firstName"=value.firstName,"lastName"=value.lastName`. Unquoted destinations
+  `firstName` and `lastName` resolve to `firstname` and `lastname`.
+  When upgrading from a version that preserved unquoted mixed-case mapping targets, update those
+  targets to quoted names before restarting the connector against an existing mixed-case table.
+  Match the names already stored in the table. A table created with lowercase columns needs lowercase
+  destinations; quoting a mixed-case name selects a different column.
   
   **Note**: Ensure that the data type of the Kafka record's fields are compatible with the data type of the ScyllaDB column.
   A column entry uses the whole path after ``key.``, ``value.`` or ``header.`` as one name, and so does a ``__ttl``
@@ -253,6 +265,8 @@ the sanitized name may be another subscribed topic.
   one of its own name. Each column is bound once, a ``key.`` entry first; other key fields, and ``key.`` entries
   to columns outside the primary key, are ignored. A tombstone that leaves a primary key column of an existing
   table unbound fails; one for a missing table is skipped first.
+  The own-name fallback fails if that primary key column is explicitly mapped from another source.
+  Configure an explicit ``key.`` mapping for such a column so inserts and deletes use the same key field.
   
 ``topic.my_topic.my_ks.my_table.consistencyLevel``
 

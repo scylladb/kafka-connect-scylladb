@@ -65,6 +65,106 @@ public class ScyllaDbSinkConnectorConfigTest {
   }
 
   @Test
+  public void shouldRejectColumnMappedFromKeyAndValue() {
+    String setting = "topic.a.b-c.ks1.T1.mapping";
+    settings.put(setting, "userid=key.id, userid=value.id");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Column 'userid'"));
+  }
+
+  @Test
+  public void shouldRejectConflictingSourcesWhenFieldNameContainsEqualsSign() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "userid=key.id=ignored,userid=value.id");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Column 'userid'"));
+  }
+
+  @Test
+  public void shouldAcceptEqualsSignInMappingSource() {
+    settings.put("topic.a.ks1.t1.mapping", "payload=value.a=b");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
+  }
+
+  @Test
+  public void shouldAcceptRepeatedSourceWithSurroundingWhitespace() {
+    settings.put("topic.a.ks1.t1.mapping", "userid=key.id,userid= key.id ");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
+  }
+
+  @Test
+  public void shouldRejectMappingEntryWithoutSource() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "userid=");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Invalid mapping entry 'userid='"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("column=key.<field>"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("column=value.<field>"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("column=header.<name>"));
+  }
+
+  @Test
+  public void shouldExplainExpirationMappingWithoutSource() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "__expiration=");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("__expiration=value.<field>"));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("nested fields separated by dots"));
+  }
+
+  @Test
+  public void shouldAcceptMetadataAndQuotedPhysicalColumnWithSameName() {
+    settings.put("topic.a.ks1.t1.mapping",
+            "id=key.id,__timestamp=value.ts,\"__timestamp\"=value.saved,__ttl=value.ttl,\"__ttl\"=value.savedTtl");
+    settings.put(ScyllaDbSinkConnectorConfig.DELETES_ENABLE_CONFIG, "true");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
+  }
+
+  @Test
+  public void shouldRejectEquivalentColumnNamesMappedFromDifferentFields() {
+    settings.put("topic.a.ks1.t1.mapping", "USERID=value.id, \"userid\"=header.id");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Column 'userid'"));
+  }
+
+  @Test
+  public void shouldRejectTtlMappedFromTwoValueFields() {
+    String setting = "topic.a.ks1.t1.mapping";
+    settings.put(setting, "__ttl=value.a,__ttl=value.b");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains(setting));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Column '__ttl'"));
+  }
+
+  @Test
+  public void shouldRejectTimestampMappedFromTwoValueFields() {
+    settings.put("topic.a.ks1.t1.mapping", "__timestamp=value.a,__timestamp=value.b");
+
+    ConfigException ex = assertThrows(ConfigException.class, () -> new ScyllaDbSinkConnectorConfig(settings));
+    assertTrue(ex.getMessage(), ex.getMessage().contains("Column '__timestamp'"));
+  }
+
+  @Test
+  public void shouldAcceptDistinctQuotedColumnNames() {
+    settings.put("topic.a.ks1.t1.mapping", "userid=key.id, \"USERID\"=value.id");
+
+    assertNotNull(new ScyllaDbSinkConnectorConfig(settings).topicWiseConfigs.get("a"));
+  }
+
+  @Test
   public void shouldKeyTopicSettingsForHyphenatedTopic() {
     settings.put("topic.topic-name.ks.tablename.ttlSeconds", "3600");
     config = new ScyllaDbSinkConnectorConfig(settings);

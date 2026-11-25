@@ -32,6 +32,27 @@ public class TopicConfigsTest {
   }
 
   @Test
+  public void shouldResolveQuotedPhysicalColumnsSeparatelyFromMetadata() {
+    Map<String, String> settings = Collections.singletonMap("mapping",
+            "ID=key.id,__timestamp=value.ts,\"__timestamp\"=value.saved,\"MixedCase\"=value.name");
+    TopicConfigs configs = new TopicConfigs("ks", "table", settings, connectorConfig);
+    Schema valueSchema = SchemaBuilder.struct()
+            .field("ts", Schema.INT64_SCHEMA)
+            .field("saved", Schema.INT64_SCHEMA)
+            .field("name", Schema.STRING_SCHEMA)
+            .build();
+    SinkRecord record = record(valueSchema,
+            new Struct(valueSchema).put("ts", 10L).put("saved", 20L).put("name", "alice"));
+
+    configs.setTablePartitionAndColumnValues(record);
+
+    assertEquals("id", configs.getTablePartitionKeyMap().get("id").getScyllaColumnName());
+    assertEquals("\"__timestamp\"", configs.getTableColumnMap().get("saved").getScyllaColumnName());
+    assertEquals("\"MixedCase\"", configs.getTableColumnMap().get("name").getScyllaColumnName());
+    assertFalse(configs.getTableColumnMap().containsKey("ts"));
+  }
+
+  @Test
   public void shouldCalculateTtlFromTimestampAndOffset() {
     TopicConfigs configs = topicConfigs("__expiration=value.validUntil", "86400");
     SinkRecord record = timestampRecord(new Date(1_010_000L));
