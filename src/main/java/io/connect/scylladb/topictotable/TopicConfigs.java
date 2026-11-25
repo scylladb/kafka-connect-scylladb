@@ -470,6 +470,9 @@ public class TopicConfigs {
       String column = valueFieldColumns.get(keyField);
       if (column == null && tablePartitionKeyMap.isEmpty()) {
         column = keyField;
+        if (boundColumns.contains(columnId(column))) {
+          continue;
+        }
         String source = physicalColumnSources.get(columnId(column));
         if (source != null && primaryKeyColumn.test(column)) {
           throw new DataException(String.format(

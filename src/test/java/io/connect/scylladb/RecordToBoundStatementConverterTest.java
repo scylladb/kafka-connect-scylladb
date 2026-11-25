@@ -720,6 +720,21 @@ public class RecordToBoundStatementConverterTest {
   }
 
   @Test
+  public void shouldIgnoreAlreadyBoundDestinationBeforeRejectingDeleteFallback() {
+    Schema keySchema = SchemaBuilder.struct().name("key")
+        .field("alias", Schema.INT64_SCHEMA)
+        .field("id", Schema.INT64_SCHEMA)
+        .build();
+
+    RecordToBoundStatementConverter.State state = delete("id=value.alias", "id",
+        new Struct(keySchema).put("alias", 7L).put("id", 99L));
+
+    assertEquals(1, state.parameters);
+    verify(boundStatement).setLong("id", 7L);
+    verify(boundStatement, never()).setLong("id", 99L);
+  }
+
+  @Test
   public void shouldRejectDeleteFallbackOverExplicitValueMapping() {
     Schema keySchema = SchemaBuilder.struct().name("key").field("id", Schema.INT64_SCHEMA).build();
 
