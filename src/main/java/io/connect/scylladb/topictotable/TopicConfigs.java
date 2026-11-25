@@ -468,20 +468,25 @@ public class TopicConfigs {
         continue;
       }
       String column = valueFieldColumns.get(keyField);
-      if (column == null && tablePartitionKeyMap.isEmpty()) {
-        column = keyField;
-        if (boundColumns.contains(columnId(column))) {
-          continue;
-        }
-        String source = physicalColumnSources.get(columnId(column));
-        if (source != null && primaryKeyColumn.test(column)) {
-          throw new DataException(String.format(
-                  "Cannot delete by key field '%s': primary key column '%s' is explicitly mapped from '%s'. "
-                          + "Configure a key mapping for this column.", keyField, column, source));
-        }
-      }
       if (column != null && primaryKeyColumn.test(column) && boundColumns.add(columnId(column))) {
         deleteKeyMap.put(keyField, new KafkaScyllaColumnMapper(column));
+      }
+    }
+    // Resolve every value namesake before considering an own-name fallback.
+    for (String keyField : keyFields) {
+      if (!tablePartitionKeyMap.isEmpty() || deleteKeyMap.containsKey(keyField)
+          || valueFieldColumns.containsKey(keyField) || boundColumns.contains(columnId(keyField))) {
+        continue;
+      }
+      if (primaryKeyColumn.test(keyField)) {
+        String source = physicalColumnSources.get(columnId(keyField));
+        if (source != null) {
+          throw new DataException(String.format(
+                  "Cannot delete by key field '%s': primary key column '%s' is explicitly mapped from '%s'. "
+                          + "Configure a key mapping for this column.", keyField, keyField, source));
+        }
+        boundColumns.add(columnId(keyField));
+        deleteKeyMap.put(keyField, new KafkaScyllaColumnMapper(keyField));
       }
     }
     return deleteKeyMap;
