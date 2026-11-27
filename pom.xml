@@ -18,7 +18,7 @@
         <surefire.version>3.6.1</surefire.version>
         <failsafe.version>3.6.1</failsafe.version>
         <kafka.version>4.4.0</kafka.version>
-        <junit.version>5.14.4</junit.version>
+        <junit.version>5.14.5</junit.version>
         <scylladb.version>4.19.4.0</scylladb.version>
         <skipIntegrationTests>false</skipIntegrationTests>
         <!-- transitive dependency versions -->
